@@ -96,7 +96,7 @@ pub mod sectors_manager_public {
 }
 
 pub mod transfer_public {
-    use crate::{ClientRegisterCommandContent, RegisterCommand, SectorVec, MAGIC_NUMBER, READ_REQ_TYPE, WRITE_REQ_TYPE};
+    use crate::{ClientRegisterCommandContent, RegisterCommand, SectorVec, SystemRegisterCommand, SystemRegisterCommandContent, MAGIC_NUMBER, READ_REQ_TYPE, WRITE_REQ_TYPE};
     use std::{alloc::System, io::Error};
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
@@ -123,12 +123,12 @@ pub mod transfer_public {
         writer: &mut (dyn AsyncWrite + Send + Unpin),
         hmac_key: &[u8],
     ) -> Result<(), Error> {
+        let mut msg: Vec<u8> = Vec::new();
+        msg.extend_from_slice(&MAGIC_NUMBER);
+
         match cmd {
             RegisterCommand::Client(client_rcmd) => {
                 // TODO move read to static array
-                let mut msg: Vec<u8> = Vec::new();
-
-                msg.extend_from_slice(&MAGIC_NUMBER);
 
                 let padding: [u8; 3] = [0; 3];
                 msg.extend_from_slice(&padding);
@@ -168,7 +168,17 @@ pub mod transfer_public {
                 }
             },
             RegisterCommand::System(system_rcmd) => {
+                let padding: [u8; 2] = [0; 2];
+                msg.extend_from_slice(&padding);
 
+                msg.push(system_rcmd.header.process_identifier);
+
+                match &system_rcmd.content {
+                    SystemRegisterCommandContent::ReadProc => {},
+                    SystemRegisterCommandContent::Value{timestamp, write_rank, sector_data} => {},
+                    SystemRegisterCommandContent::WriteProc { timestamp, write_rank, data_to_write } => {},
+                    SystemRegisterCommandContent::Ack => {},
+                }
             }
         }
         unimplemented!()
