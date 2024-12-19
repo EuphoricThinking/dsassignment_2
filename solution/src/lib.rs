@@ -87,8 +87,8 @@ pub mod sectors_manager_public {
 }
 
 pub mod transfer_public {
-    use crate::RegisterCommand;
-    use std::io::Error;
+    use crate::{RegisterCommand, MAGIC_NUMBER};
+    use std::{alloc::System, io::Error};
     use tokio::io::{AsyncRead, AsyncWrite};
 
     pub async fn deserialize_register_command(
@@ -104,6 +104,18 @@ pub mod transfer_public {
         writer: &mut (dyn AsyncWrite + Send + Unpin),
         hmac_key: &[u8],
     ) -> Result<(), Error> {
+        match cmd {
+            RegisterCommand::Client(client_rcmd) => {
+                let mut msg: Vec<u8> = Vec::new();
+
+                msg.extend_from_slice(&MAGIC_NUMBER);
+
+                let padding: [u8; 3] = [0; 3];
+            },
+            RegisterCommand::System(system_rcmd) => {
+
+            }
+        }
         unimplemented!()
     }
 }
