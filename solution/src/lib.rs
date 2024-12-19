@@ -6,6 +6,11 @@ pub use register_client_public::*;
 pub use sectors_manager_public::*;
 pub use transfer_public::*;
 
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
+
+type HmacSha256 = Hmac<Sha256>;
+
 pub async fn run_register_process(config: Configuration) {
     unimplemented!()
 }
@@ -87,9 +92,9 @@ pub mod sectors_manager_public {
 }
 
 pub mod transfer_public {
-    use crate::{RegisterCommand, MAGIC_NUMBER};
+    use crate::{ClientRegisterCommandContent, RegisterCommand, SectorVec, MAGIC_NUMBER, READ_REQ_TYPE, WRITE_REQ_TYPE};
     use std::{alloc::System, io::Error};
-    use tokio::io::{AsyncRead, AsyncWrite};
+    use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
     pub async fn deserialize_register_command(
         data: &mut (dyn AsyncRead + Send + Unpin),
@@ -106,11 +111,41 @@ pub mod transfer_public {
     ) -> Result<(), Error> {
         match cmd {
             RegisterCommand::Client(client_rcmd) => {
+                // TODO move read to static array
                 let mut msg: Vec<u8> = Vec::new();
 
                 msg.extend_from_slice(&MAGIC_NUMBER);
 
                 let padding: [u8; 3] = [0; 3];
+                msg.extend_from_slice(&padding);
+
+                match &client_rcmd.content {
+                    ClientRegisterCommandContent::Read => {
+                        msg.push(READ_REQ_TYPE);
+                    },
+                    ClientRegisterCommandContent::Write { data } => {
+                        msg.push(WRITE_REQ_TYPE);
+                    },
+                }
+
+                let request_number = client_rcmd.header.request_identifier;
+                let sector_idx = client_rcmd.header.sector_idx;
+
+                msg.extend_from_slice(&request_number.to_be_bytes());
+                msg.extend_from_slice(&sector_idx.to_be_bytes());
+                
+                if let ClientRegisterCommandContent::Write { data } = &client_rcmd.content {
+                    let SectorVec(vec_to_write) = data;
+                    msg.extend_from_slice(&vec_to_write);
+                }
+
+                let mut mac = HmacSha256::new_from_slice(hmac_key);
+                mac.update(&msg);
+                let tag = mac.finalize().into_bytes();
+
+                msg.extend_from_slice(&tag);
+
+                writer.write_all(msg).await.unwrap()
             },
             RegisterCommand::System(system_rcmd) => {
 
