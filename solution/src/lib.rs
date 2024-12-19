@@ -6,10 +6,14 @@ pub use register_client_public::*;
 pub use sectors_manager_public::*;
 pub use transfer_public::*;
 
-use hmac::{Hmac, Mac};
-use sha2::Sha256;
+// use hmac::{Hmac, Mac};
+// use sha2::Sha256;
+// use hmac::digest::KeyInit;
 
-type HmacSha256 = Hmac<Sha256>;
+// type HmacSha256 = Hmac<Sha256>;
+
+// use hmac::Mac;
+// use hmac::digest::KeyInit;
 
 pub async fn run_register_process(config: Configuration) {
     unimplemented!()
@@ -94,8 +98,18 @@ pub mod sectors_manager_public {
 pub mod transfer_public {
     use crate::{ClientRegisterCommandContent, RegisterCommand, SectorVec, MAGIC_NUMBER, READ_REQ_TYPE, WRITE_REQ_TYPE};
     use std::{alloc::System, io::Error};
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    // use hmac::digest::KeyInit;
     use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
+    // use sha2::Sha256;
+    // use hmac::{Hmac, Mac};
+    // // use hex_literal::hex;
+    
+    // Create alias for HMAC-SHA256
+    type HmacSha256 = Hmac<Sha256>;
+    
     pub async fn deserialize_register_command(
         data: &mut (dyn AsyncRead + Send + Unpin),
         hmac_system_key: &[u8; 64],
@@ -139,13 +153,19 @@ pub mod transfer_public {
                     msg.extend_from_slice(&vec_to_write);
                 }
 
-                let mut mac = HmacSha256::new_from_slice(hmac_key);
-                mac.update(&msg);
-                let tag = mac.finalize().into_bytes();
+                let mut mac_res = HmacSha256::new_from_slice(hmac_key);
+                
+                match mac_res {
+                    Err(msg) => {return Err(Error::new(std::io::ErrorKind::InvalidInput, msg.to_string()));},
+                    Ok(mut mac) => {
+                        mac.update(&msg);
+                        let tag = mac.finalize().into_bytes();
 
-                msg.extend_from_slice(&tag);
+                        msg.extend_from_slice(&tag);
 
-                writer.write_all(msg).await.unwrap()
+                        writer.write_all(&msg).await?
+                    }
+                }
             },
             RegisterCommand::System(system_rcmd) => {
 
