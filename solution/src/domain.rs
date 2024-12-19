@@ -4,8 +4,10 @@ use uuid::Uuid;
 
 pub static MAGIC_NUMBER: [u8; 4] = [0x61, 0x74, 0x64, 0x64];
 
-pub static READ_REQ_TYPE: u8 = 0x01;
-pub static WRITE_REQ_TYPE: u8 = 0x02;
+pub static READ_CLIENT_REQ: u8 = 0x01;
+pub static WRITE_CLIENT_REQ: u8 = 0x02;
+
+pub static READ_PROC: u8 = 0x03;
 
 pub struct Configuration {
     /// Hmac key to verify and sign internal requests.

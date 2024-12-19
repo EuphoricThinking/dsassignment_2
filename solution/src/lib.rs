@@ -96,7 +96,7 @@ pub mod sectors_manager_public {
 }
 
 pub mod transfer_public {
-    use crate::{ClientRegisterCommandContent, RegisterCommand, SectorVec, SystemRegisterCommand, SystemRegisterCommandContent, MAGIC_NUMBER, READ_REQ_TYPE, WRITE_REQ_TYPE};
+    use crate::{ClientRegisterCommandContent, RegisterCommand, SectorVec, SystemRegisterCommand, SystemRegisterCommandContent, MAGIC_NUMBER, READ_CLIENT_REQ, WRITE_CLIENT_REQ};
     use std::{alloc::System, io::Error};
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
@@ -109,6 +109,15 @@ pub mod transfer_public {
     
     // Create alias for HMAC-SHA256
     type HmacSha256 = Hmac<Sha256>;
+
+    fn system_msg_type(msg: SystemRegisterCommandContent) -> u8 {
+        match &msg {
+            SystemRegisterCommandContent::ReadProc => {},
+            SystemRegisterCommandContent::Value{..} => {},
+            SystemRegisterCommandContent::WriteProc { .. } => {},
+            SystemRegisterCommandContent::Ack => {},
+        }
+    }
     
     pub async fn deserialize_register_command(
         data: &mut (dyn AsyncRead + Send + Unpin),
@@ -135,10 +144,10 @@ pub mod transfer_public {
 
                 match &client_rcmd.content {
                     ClientRegisterCommandContent::Read => {
-                        msg.push(READ_REQ_TYPE);
+                        msg.push(READ_CLIENT_REQ);
                     },
                     ClientRegisterCommandContent::Write { data } => {
-                        msg.push(WRITE_REQ_TYPE);
+                        msg.push(WRITE_CLIENT_REQ);
                     },
                 }
 
