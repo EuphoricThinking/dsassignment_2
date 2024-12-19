@@ -8,6 +8,9 @@ pub static READ_CLIENT_REQ: u8 = 0x01;
 pub static WRITE_CLIENT_REQ: u8 = 0x02;
 
 pub static READ_PROC: u8 = 0x03;
+pub static VALUE: u8 = 0x04;
+pub static WRITE_PROC: u8 = 0x05;
+pub static ACK: u8 = 0x06;
 
 pub struct Configuration {
     /// Hmac key to verify and sign internal requests.

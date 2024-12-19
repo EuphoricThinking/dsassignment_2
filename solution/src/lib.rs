@@ -96,7 +96,7 @@ pub mod sectors_manager_public {
 }
 
 pub mod transfer_public {
-    use crate::{ClientRegisterCommandContent, RegisterCommand, SectorVec, SystemRegisterCommand, SystemRegisterCommandContent, MAGIC_NUMBER, READ_CLIENT_REQ, WRITE_CLIENT_REQ};
+    use crate::{ClientRegisterCommandContent, RegisterCommand, SectorVec, SystemRegisterCommand, SystemRegisterCommandContent, ACK, MAGIC_NUMBER, READ_CLIENT_REQ, READ_PROC, VALUE, WRITE_CLIENT_REQ, WRITE_PROC};
     use std::{alloc::System, io::Error};
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
@@ -110,14 +110,43 @@ pub mod transfer_public {
     // Create alias for HMAC-SHA256
     type HmacSha256 = Hmac<Sha256>;
 
-    fn system_msg_type(msg: SystemRegisterCommandContent) -> u8 {
+    fn get_system_msg_type(msg: &SystemRegisterCommandContent) -> u8 {
         match &msg {
-            SystemRegisterCommandContent::ReadProc => {},
-            SystemRegisterCommandContent::Value{..} => {},
-            SystemRegisterCommandContent::WriteProc { .. } => {},
-            SystemRegisterCommandContent::Ack => {},
+            SystemRegisterCommandContent::ReadProc => {READ_PROC},
+            SystemRegisterCommandContent::Value{..} => {VALUE},
+            SystemRegisterCommandContent::WriteProc { .. } => {WRITE_PROC},
+            SystemRegisterCommandContent::Ack => {ACK},
         }
     }
+
+    async fn create_mac_or_get_error(writer: &mut (dyn AsyncWrite + Send + Unpin), hmac_key: &[u8], mut msg: Vec<u8>) -> Result<(), Error> {
+        let mut mac_res = HmacSha256::new_from_slice(hmac_key);
+                
+        match mac_res {
+            Err(msg) => {return Err(Error::new(std::io::ErrorKind::InvalidInput, msg.to_string()));},
+            Ok(mut mac) => {
+                mac.update(&msg);
+                let tag = mac.finalize().into_bytes();
+
+                msg.extend_from_slice(&tag);
+
+                writer.write_all(&msg).await?;
+
+                Ok(())
+            }
+        }
+    }
+
+    fn write_val_write_proc(mut msg: Vec<u8>, timestamp: &u64, write_rank: &u8, sector_data: &SectorVec) -> () {
+        msg.extend_from_slice(&timestamp.to_be_bytes());
+        let pad_val: [u8; 7] = [0; 7];
+        msg.extend_from_slice(&pad_val);
+        msg.push(*write_rank);
+        
+        let SectorVec(vec_to_write) = sector_data;
+        msg.extend_from_slice(&vec_to_write);
+    }
+
     
     pub async fn deserialize_register_command(
         data: &mut (dyn AsyncRead + Send + Unpin),
@@ -162,31 +191,58 @@ pub mod transfer_public {
                     msg.extend_from_slice(&vec_to_write);
                 }
 
-                let mut mac_res = HmacSha256::new_from_slice(hmac_key);
+                // let mut mac_res = HmacSha256::new_from_slice(hmac_key);
                 
-                match mac_res {
-                    Err(msg) => {return Err(Error::new(std::io::ErrorKind::InvalidInput, msg.to_string()));},
-                    Ok(mut mac) => {
-                        mac.update(&msg);
-                        let tag = mac.finalize().into_bytes();
+                // match mac_res {
+                //     Err(msg) => {return Err(Error::new(std::io::ErrorKind::InvalidInput, msg.to_string()));},
+                //     Ok(mut mac) => {
+                //         mac.update(&msg);
+                //         let tag = mac.finalize().into_bytes();
 
-                        msg.extend_from_slice(&tag);
+                //         msg.extend_from_slice(&tag);
 
-                        writer.write_all(&msg).await?
-                    }
-                }
+                //         writer.write_all(&msg).await?
+                //     }
+                // }
+                create_mac_or_get_error(writer, hmac_key, msg).await?
             },
             RegisterCommand::System(system_rcmd) => {
                 let padding: [u8; 2] = [0; 2];
                 msg.extend_from_slice(&padding);
 
                 msg.push(system_rcmd.header.process_identifier);
+                msg.push(get_system_msg_type(&system_rcmd.content));
+                
+                let msg_ident = system_rcmd.header.msg_ident.as_u128();
+                let sector_idx = system_rcmd.header.sector_idx;
+                msg.extend_from_slice(&msg_ident.to_be_bytes());
+                msg.extend_from_slice(&sector_idx.to_be_bytes());
 
                 match &system_rcmd.content {
-                    SystemRegisterCommandContent::ReadProc => {},
-                    SystemRegisterCommandContent::Value{timestamp, write_rank, sector_data} => {},
-                    SystemRegisterCommandContent::WriteProc { timestamp, write_rank, data_to_write } => {},
-                    SystemRegisterCommandContent::Ack => {},
+                    SystemRegisterCommandContent::ReadProc => {
+                        create_mac_or_get_error(writer, hmac_key, msg).await?
+                    },
+                    SystemRegisterCommandContent::Value{timestamp, write_rank, sector_data} => {
+                        // msg.extend_from_slice(&timestamp.to_be_bytes());
+                        // let pad_val: [u8; 7] = [0; 7];
+                        // msg.extend_from_slice(&pad_val);
+                        // msg.push(*write_rank);
+                        
+                        // let SectorVec(vec_to_write) = sector_data;
+                        // msg.extend_from_slice(&vec_to_write);
+                        write_val_write_proc(msg, timestamp, write_rank, sector_data);
+
+                        create_mac_or_get_error(writer, hmac_key, msg).await?
+                    },
+                    SystemRegisterCommandContent::WriteProc { timestamp, write_rank, data_to_write } => {
+                        write_val_write_proc(msg, timestamp, write_rank, data_to_write);
+
+                        // writer.write_all(&timestamp.to_be_bytes()).await?;
+                        create_mac_or_get_error(writer, hmac_key, msg).await?
+                    },
+                    SystemRegisterCommandContent::Ack => {
+                        create_mac_or_get_error(writer, hmac_key, msg).await?
+                    },
                 }
             }
         }
