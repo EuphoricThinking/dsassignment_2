@@ -119,7 +119,7 @@ pub mod transfer_public {
         }
     }
 
-    async fn create_mac_or_get_error(writer: &mut (dyn AsyncWrite + Send + Unpin), hmac_key: &[u8], mut msg: Vec<u8>) -> Result<(), Error> {
+    async fn create_mac_or_get_error(writer: &mut (dyn AsyncWrite + Send + Unpin), hmac_key: &[u8]) -> Result<(), Error> {
         let mut mac_res = HmacSha256::new_from_slice(hmac_key);
                 
         match mac_res {
@@ -128,13 +128,20 @@ pub mod transfer_public {
                 mac.update(&msg);
                 let tag = mac.finalize().into_bytes();
 
-                msg.extend_from_slice(&tag);
+                // msg.extend_from_slice(&tag);
 
-                writer.write_all(&msg).await?;
+                // writer.write_all(&msg).await?;
+                writer.write_all(&tag).await?;
 
                 Ok(())
             }
         }
+    }
+
+    async fn write_one_byte(writer: &mut (dyn AsyncWrite + Send + Unpin), value: u8) -> Result<(), Error> {
+        let one_byte_res = writer.write_all(&[value]).await;
+
+        one_byte_res
     }
 
     fn write_val_write_proc(mut msg: Vec<u8>, timestamp: &u64, write_rank: &u8, sector_data: &SectorVec) -> () {
@@ -161,34 +168,49 @@ pub mod transfer_public {
         writer: &mut (dyn AsyncWrite + Send + Unpin),
         hmac_key: &[u8],
     ) -> Result<(), Error> {
-        let mut msg: Vec<u8> = Vec::new();
-        msg.extend_from_slice(&MAGIC_NUMBER);
+        // let mut msg: Vec<u8> = Vec::new();
+        // msg.extend_from_slice(&MAGIC_NUMBER);
+        writer.write_all(&MAGIC_NUMBER).await?;
 
         match cmd {
             RegisterCommand::Client(client_rcmd) => {
                 // TODO move read to static array
 
                 let padding: [u8; 3] = [0; 3];
-                msg.extend_from_slice(&padding);
+                // msg.extend_from_slice(&padding);
+                writer.write_all(&padding).await?;
 
                 match &client_rcmd.content {
                     ClientRegisterCommandContent::Read => {
-                        msg.push(READ_CLIENT_REQ);
+                        // msg.push(READ_CLIENT_REQ);
+                        let one_byte_res = writer.write_all(&[READ_CLIENT_REQ]).await;
+
+                        if one_byte_res.is_err() {
+                            return one_byte_res;
+                        }
                     },
                     ClientRegisterCommandContent::Write { data } => {
-                        msg.push(WRITE_CLIENT_REQ);
+                        // msg.push(WRITE_CLIENT_REQ);
+                        let one_byte_res = writer.write_all(&[WRITE_CLIENT_REQ]).await;
+
+                        if one_byte_res.is_err() {
+                            return one_byte_res;
+                        }
                     },
                 }
 
                 let request_number = client_rcmd.header.request_identifier;
                 let sector_idx = client_rcmd.header.sector_idx;
 
-                msg.extend_from_slice(&request_number.to_be_bytes());
-                msg.extend_from_slice(&sector_idx.to_be_bytes());
-                
+                // msg.extend_from_slice(&request_number.to_be_bytes());
+                // msg.extend_from_slice(&sector_idx.to_be_bytes());
+                writer.write_all(&request_number.to_be_bytes()).await?;
+                writer.write_all(&sector_idx.to_be_bytes()).await?;
+
                 if let ClientRegisterCommandContent::Write { data } = &client_rcmd.content {
                     let SectorVec(vec_to_write) = data;
-                    msg.extend_from_slice(&vec_to_write);
+                    // msg.extend_from_slice(&vec_to_write);
+                    writer.write_all(&vec_to_write).await?;
                 }
 
                 // let mut mac_res = HmacSha256::new_from_slice(hmac_key);
@@ -204,11 +226,12 @@ pub mod transfer_public {
                 //         writer.write_all(&msg).await?
                 //     }
                 // }
-                create_mac_or_get_error(writer, hmac_key, msg).await?
+                create_mac_or_get_error(writer, hmac_key).await?
             },
             RegisterCommand::System(system_rcmd) => {
                 let padding: [u8; 2] = [0; 2];
-                msg.extend_from_slice(&padding);
+                // msg.extend_from_slice(&padding);
+                writer.write_all(&padding).await?;
 
                 msg.push(system_rcmd.header.process_identifier);
                 msg.push(get_system_msg_type(&system_rcmd.content));
