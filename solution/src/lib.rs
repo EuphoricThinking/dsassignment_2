@@ -102,6 +102,7 @@ pub mod transfer_public {
     use sha2::Sha256;
     // use hmac::digest::KeyInit;
     use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+    use uuid::timestamp::context;
 
     // use sha2::Sha256;
     // use hmac::{Hmac, Mac};
@@ -218,6 +219,20 @@ pub mod transfer_public {
         }
     }
 
+    fn get_register_command_deserialize_writeproc_val(content: [u8; CONTENT_SIZE], timestamp: [u8; 8], padding_with_rank: [u8; 8], msg_type: u8) -> SystemRegisterCommandContent {
+
+        if msg_type == WRITE_PROC {
+            return SystemRegisterCommandContent::WriteProc { timestamp: u64::from_be_bytes(timestamp),
+                write_rank: padding_with_rank[7],
+                data_to_write: SectorVec(content.to_vec()) };
+        }
+        else {
+            return SystemRegisterCommandContent::Value { timestamp: u64::from_be_bytes(timestamp),
+                write_rank: padding_with_rank[7],
+                sector_data: SectorVec(content.to_vec()) }
+        }
+    }
+
     pub async fn deserialize_register_command(
         data: &mut (dyn AsyncRead + Send + Unpin),
         hmac_system_key: &[u8; 64],
@@ -287,7 +302,7 @@ pub mod transfer_public {
         
                             let mut client_content = ClientRegisterCommandContent::Read;
                             if lower_half == WRITE_CLIENT_REQ {
-                                client_content = ClientRegisterCommandContent::Write{data: SectorVec(content)};
+                                client_content = ClientRegisterCommandContent::Write{data: SectorVec(content.to_vec())};
                             }
         
                             let client_command = RegisterCommand::Client(ClientRegisterCommand{
@@ -304,49 +319,66 @@ pub mod transfer_public {
                  else {
                     let process_rank = padding_rank_msg_type[2];
 
-                    let msg_uuid: [u8; 16] = [0; 16];
+                    let mut msg_uuid: [u8; 16] = [0; 16];
                     data.read_exact(msg_uuid.as_mut()).await?;
 
-                    let sector_idx: [u8; 8] = [0; 8];
+                    let mut sector_idx: [u8; 8] = [0; 8];
                     data.read_exact(sector_idx.as_mut()).await?;
 
                     msg.extend_from_slice(&msg_uuid);
                     msg.extend_from_slice(&sector_idx);
 
-                    if (lower_half == READ_PROC) || (lower_half == ACK) {
+                    let mut timestamp: [u8; 8] = [0; 8];
+                    let mut padding_value_wr: [u8; 8] = [0; 8];
+                    let mut content: [u8; CONTENT_SIZE] = [0; CONTENT_SIZE];
+
+                    if (lower_half == VALUE) || (lower_half == WRITE_PROC) {
+                        data.read_exact(timestamp.as_mut()).await?;
+                        data.read_exact(&mut padding_value_wr).await?;
+                        data.read_exact(content.as_mut()).await?;
+
+                        msg.extend_from_slice(&timestamp);
+                        msg.extend_from_slice(&padding_value_wr);
+                        msg.extend_from_slice(&content);
+                    }
+
+                    // if (lower_half == READ_PROC) || (lower_half == ACK) {
                         // no content
-                        let mut tag: [u8; 32] = [0; 32];
-                        data.read_exact(tag.as_mut()).await?;
+                    let mut tag: [u8; 32] = [0; 32];
+                    data.read_exact(tag.as_mut()).await?;
 
 
-                        let hmac_result = verify_hmac_tag(&msg, &tag, hmac_system_key);
+                    let hmac_result = verify_hmac_tag(&msg, &tag, hmac_system_key);
 
-                        match hmac_result {
-                            Err(e) => {return Err(e)},
-                            Ok(is_hmac_valid) => {
+                    match hmac_result {
+                        Err(e) => {return Err(e)},
+                        Ok(is_hmac_valid) => {
 
-                                let register_header = SystemCommandHeader{
-                                    process_identifier: process_rank,
-                                    msg_ident: uuid::Uuid::from_u128(u128::from_be_bytes(msg_uuid)),
-                                    sector_idx: u64::from_be_bytes(sector_idx),
-                                };
+                            let register_header = SystemCommandHeader{
+                                process_identifier: process_rank,
+                                msg_ident: uuid::Uuid::from_u128(u128::from_be_bytes(msg_uuid)),
+                                sector_idx: u64::from_be_bytes(sector_idx),
+                            };
 
-                                let mut register_content = SystemRegisterCommandContent::ReadProc;
-                                if lower_half == ACK {
-                                    register_content = SystemRegisterCommandContent::Ack;
-                                }
-
-                                let register_command = RegisterCommand::System(
-                                    SystemRegisterCommand{
-                                        header: register_header,
-                                        content: register_content,
-                                    }
-                                );
-
-                                return Ok((register_command, is_hmac_valid));
+                            let mut register_content = SystemRegisterCommandContent::ReadProc;
+                            if lower_half == ACK {
+                                register_content = SystemRegisterCommandContent::Ack;
                             }
+                            else  {
+                                register_content = get_register_command_deserialize_writeproc_val(content, timestamp, padding_value_wr, msg_type);
+                            }
+
+                            let register_command = RegisterCommand::System(
+                                SystemRegisterCommand{
+                                    header: register_header,
+                                    content: register_content,
+                                }
+                            );
+
+                            return Ok((register_command, is_hmac_valid));
                         }
                     }
+                    // }
                  }
             }
 
