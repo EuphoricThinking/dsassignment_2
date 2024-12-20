@@ -96,7 +96,7 @@ pub mod sectors_manager_public {
 }
 
 pub mod transfer_public {
-    use crate::{ClientRegisterCommandContent, RegisterCommand, SectorVec, SystemRegisterCommand, SystemRegisterCommandContent, ACK, CONTENT_SIZE, EXTERNAL_UPPER_HALF, MAGIC_NUMBER, PROCESS_CUSTOM_MSG, PROCESS_RESPONSE_ADD, READ_CLIENT_REQ, READ_PROC, VALUE, WRITE_CLIENT_REQ, WRITE_PROC};
+    use crate::{ClientCommandHeader, ClientRegisterCommand, ClientRegisterCommandContent, RegisterCommand, SectorVec, SystemRegisterCommand, SystemRegisterCommandContent, ACK, CONTENT_SIZE, EXTERNAL_UPPER_HALF, MAGIC_NUMBER, PROCESS_CUSTOM_MSG, PROCESS_RESPONSE_ADD, READ_CLIENT_REQ, READ_PROC, VALUE, WRITE_CLIENT_REQ, WRITE_PROC};
     use std::{alloc::System, io::{Error, ErrorKind}};
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
@@ -264,16 +264,41 @@ pub mod transfer_public {
                     msg.extend_from_slice(&request_number);
                     msg.extend_from_slice(&sector_idx);
 
+                    let mut content: [u8; CONTENT_SIZE] = [0; CONTENT_SIZE];
                     if lower_half == WRITE_CLIENT_REQ {
-                        let mut content: [u8; CONTENT_SIZE] = [0; CONTENT_SIZE];
 
                         data.read_exact(content.as_mut()).await?;
                         msg.extend_from_slice(&content);
                     }
 
+                    let mut tag: [u8; 32] = [0; 32];
+                    data.read_exact(tag.as_mut()).await?;
 
+                    let hmac_result = verify_hmac_tag(&msg, &tag, hmac_client_key);
+
+                    match hmac_result {
+                        Err(e) => {return Err(e)},
+                        Ok(is_hmac_valid) => {
+                            let client_header = ClientCommandHeader{
+                                request_identifier: u64::from_be_bytes(request_number),
+                                sector_idx: u64::from_be_bytes(sector_idx),
+                            };
+        
+                            let mut client_content = ClientRegisterCommandContent::Read;
+                            if lower_half == WRITE_CLIENT_REQ {
+                                client_content = ClientRegisterCommandContent::Write{data: SectorVec(content)};
+                            }
+        
+                            let client_command = RegisterCommand::Client(ClientRegisterCommand{
+                                header: client_header,
+                                content: client_content,
+                            });
+        
+                            return Ok((client_command, is_hmac_valid));
+                        }
+                    } 
  
-    
+                    
                  }
             }
 
