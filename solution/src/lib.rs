@@ -125,7 +125,7 @@ pub mod transfer_public {
         match mac_res {
             Err(msg) => {return Err(Error::new(std::io::ErrorKind::InvalidInput, msg.to_string()));},
             Ok(mut mac) => {
-                mac.update(&msg);
+                mac.update(&writer);
                 let tag = mac.finalize().into_bytes();
 
                 // msg.extend_from_slice(&tag);
@@ -144,14 +144,16 @@ pub mod transfer_public {
         one_byte_res
     }
 
-    fn write_val_write_proc(mut msg: Vec<u8>, timestamp: &u64, write_rank: &u8, sector_data: &SectorVec) -> () {
-        msg.extend_from_slice(&timestamp.to_be_bytes());
+    async fn write_val_write_proc(mut writer: &mut (dyn AsyncWrite + Send + Unpin), timestamp: &u64, write_rank: &u8, sector_data: &SectorVec) -> Result<(), Error> {
+        writer.write_all(&timestamp.to_be_bytes()).await?;
         let pad_val: [u8; 7] = [0; 7];
-        msg.extend_from_slice(&pad_val);
-        msg.push(*write_rank);
+        writer.write_all(&pad_val).await?;
+        // msg.push(*write_rank);
+        writer.write_all(&[*write_rank]).await?;
         
         let SectorVec(vec_to_write) = sector_data;
-        msg.extend_from_slice(&vec_to_write);
+        // msg.extend_from_slice(&vec_to_write);
+        writer.write_all(&vec_to_write).await
     }
 
     
@@ -233,17 +235,21 @@ pub mod transfer_public {
                 // msg.extend_from_slice(&padding);
                 writer.write_all(&padding).await?;
 
-                msg.push(system_rcmd.header.process_identifier);
-                msg.push(get_system_msg_type(&system_rcmd.content));
-                
+                // msg.push(system_rcmd.header.process_identifier);
+                writer.write_all(&[system_rcmd.header.process_identifier]).await?;
+                // msg.push(get_system_msg_type(&system_rcmd.content));
+                writer.write_all(&[get_system_msg_type(&system_rcmd.content)]).await?;
+
                 let msg_ident = system_rcmd.header.msg_ident.as_u128();
                 let sector_idx = system_rcmd.header.sector_idx;
-                msg.extend_from_slice(&msg_ident.to_be_bytes());
-                msg.extend_from_slice(&sector_idx.to_be_bytes());
+                // msg.extend_from_slice(&msg_ident.to_be_bytes());
+                // msg.extend_from_slice(&sector_idx.to_be_bytes());
+                writer.write_all(&msg_ident.to_be_bytes()).await?;
+                writer.write_all(&sector_idx.to_be_bytes()).await?;
 
                 match &system_rcmd.content {
                     SystemRegisterCommandContent::ReadProc => {
-                        create_mac_or_get_error(writer, hmac_key, msg).await?
+                        create_mac_or_get_error(writer, hmac_key).await?
                     },
                     SystemRegisterCommandContent::Value{timestamp, write_rank, sector_data} => {
                         // msg.extend_from_slice(&timestamp.to_be_bytes());
