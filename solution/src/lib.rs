@@ -96,7 +96,7 @@ pub mod sectors_manager_public {
 }
 
 pub mod transfer_public {
-    use crate::{ClientCommandHeader, ClientRegisterCommand, ClientRegisterCommandContent, RegisterCommand, SectorVec, SystemRegisterCommand, SystemRegisterCommandContent, ACK, CONTENT_SIZE, EXTERNAL_UPPER_HALF, MAGIC_NUMBER, PROCESS_CUSTOM_MSG, PROCESS_RESPONSE_ADD, READ_CLIENT_REQ, READ_PROC, VALUE, WRITE_CLIENT_REQ, WRITE_PROC};
+    use crate::{ClientCommandHeader, ClientRegisterCommand, ClientRegisterCommandContent, RegisterCommand, SectorVec, SystemCommandHeader, SystemRegisterCommand, SystemRegisterCommandContent, ACK, CONTENT_SIZE, EXTERNAL_UPPER_HALF, MAGIC_NUMBER, PROCESS_CUSTOM_MSG, PROCESS_RESPONSE_ADD, READ_CLIENT_REQ, READ_PROC, VALUE, WRITE_CLIENT_REQ, WRITE_PROC};
     use std::{alloc::System, io::{Error, ErrorKind}};
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
@@ -248,6 +248,8 @@ pub mod transfer_public {
                 continue;
             }
 
+            msg.extend_from_slice(&padding_rank_msg_type);
+
             let upper_half = msg_type & 0xF0;
             let lower_half = msg_type & 0x0F;
 
@@ -259,7 +261,6 @@ pub mod transfer_public {
                     let mut sector_idx: [u8; 8] = [0; 8];
                     data.read_exact(sector_idx.as_mut()).await?;
 
-                    msg.extend_from_slice(&padding_rank_msg_type);
                     // msg.extend_from_slice(u64::from_be_bytes(request_number));
                     msg.extend_from_slice(&request_number);
                     msg.extend_from_slice(&sector_idx);
@@ -299,6 +300,53 @@ pub mod transfer_public {
                     } 
  
                     
+                 }
+                 else {
+                    let process_rank = padding_rank_msg_type[2];
+
+                    let msg_uuid: [u8; 16] = [0; 16];
+                    data.read_exact(msg_uuid.as_mut()).await?;
+
+                    let sector_idx: [u8; 8] = [0; 8];
+                    data.read_exact(sector_idx.as_mut()).await?;
+
+                    msg.extend_from_slice(&msg_uuid);
+                    msg.extend_from_slice(&sector_idx);
+
+                    if (lower_half == READ_PROC) || (lower_half == ACK) {
+                        // no content
+                        let mut tag: [u8; 32] = [0; 32];
+                        data.read_exact(tag.as_mut()).await?;
+
+
+                        let hmac_result = verify_hmac_tag(&msg, &tag, hmac_system_key);
+
+                        match hmac_result {
+                            Err(e) => {return Err(e)},
+                            Ok(is_hmac_valid) => {
+
+                                let register_header = SystemCommandHeader{
+                                    process_identifier: process_rank,
+                                    msg_ident: uuid::Uuid::from_u128(u128::from_be_bytes(msg_uuid)),
+                                    sector_idx: u64::from_be_bytes(sector_idx),
+                                };
+
+                                let mut register_content = SystemRegisterCommandContent::ReadProc;
+                                if lower_half == ACK {
+                                    register_content = SystemRegisterCommandContent::Ack;
+                                }
+
+                                let register_command = RegisterCommand::System(
+                                    SystemRegisterCommand{
+                                        header: register_header,
+                                        content: register_content,
+                                    }
+                                );
+
+                                return Ok((register_command, is_hmac_valid));
+                            }
+                        }
+                    }
                  }
             }
 
