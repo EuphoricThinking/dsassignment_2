@@ -11,6 +11,8 @@ pub static READ_PROC: u8 = 0x03;
 pub static VALUE: u8 = 0x04;
 pub static WRITE_PROC: u8 = 0x05;
 pub static ACK: u8 = 0x06;
+pub static PROCESS_RESPONSE_ADD: u8 = 0x40;
+pub static PROCESS_CUSTOM_MSG: u8 = 0x80;
 
 pub struct Configuration {
     /// Hmac key to verify and sign internal requests.

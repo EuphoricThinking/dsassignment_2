@@ -96,7 +96,7 @@ pub mod sectors_manager_public {
 }
 
 pub mod transfer_public {
-    use crate::{ClientRegisterCommandContent, RegisterCommand, SectorVec, SystemRegisterCommand, SystemRegisterCommandContent, ACK, MAGIC_NUMBER, READ_CLIENT_REQ, READ_PROC, VALUE, WRITE_CLIENT_REQ, WRITE_PROC};
+    use crate::{ClientRegisterCommandContent, RegisterCommand, SectorVec, SystemRegisterCommand, SystemRegisterCommandContent, ACK, MAGIC_NUMBER, PROCESS_CUSTOM_MSG, PROCESS_RESPONSE_ADD, READ_CLIENT_REQ, READ_PROC, VALUE, WRITE_CLIENT_REQ, WRITE_PROC};
     use std::{alloc::System, io::{Error, ErrorKind}};
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
@@ -184,6 +184,19 @@ pub mod transfer_public {
 
     }
 
+    fn is_message_type_valid(msg_type: u8) -> bool {
+        let upper_half = 0xF0 & msg_type;
+        let lower_half = 0x0F & msg_type;
+        if (lower_half <= ACK) && (lower_half != 0x00) && (upper_half == 0x00 || upper_half == PROCESS_RESPONSE_ADD) {
+            return true;
+        }
+        else if (upper_half == PROCESS_CUSTOM_MSG) {
+            return true;
+        }
+
+        return false;
+    }
+
     pub async fn deserialize_register_command(
         data: &mut (dyn AsyncRead + Send + Unpin),
         hmac_system_key: &[u8; 64],
@@ -195,14 +208,22 @@ pub mod transfer_public {
         //     Err(e) => {return Err(e)},
         //     Ok(false) => {return Err(Error::new(ErrorKind::UnexpectedEof, "No magic number found to the end of the message"))},
         //     Ok(true) => {
-        is_magic_number_found(data).await?;
-        let mut msg = Vec::new();
-        msg.extend_from_slice(&MAGIC_NUMBER);
+        let full_msg_found = false;
 
-        let mut padding_rank_msg_type = vec![0; 4];
-        data.read_exact(padding_rank_msg_type.as_mut()).await?;
+        while !full_msg_found {
+            is_magic_number_found(data).await?;
+            let mut msg = Vec::new();
+            msg.extend_from_slice(&MAGIC_NUMBER);
 
-            // }
+            let mut padding_rank_msg_type = vec![0; 4];
+            data.read_exact(padding_rank_msg_type.as_mut()).await?;
+
+            let is_msg_type_correct = is_message_type_valid(padding_rank_msg_type[3]);
+                // }
+            
+            if !is_msg_type_correct {
+                continue;
+            }
         }
 
         unimplemented!()
