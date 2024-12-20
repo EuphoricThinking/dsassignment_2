@@ -11,9 +11,15 @@ pub static READ_PROC: u8 = 0x03;
 pub static VALUE: u8 = 0x04;
 pub static WRITE_PROC: u8 = 0x05;
 pub static ACK: u8 = 0x06;
+
+pub static EXTERNAL_UPPER_HALF: u8 = 0x00;
 pub static PROCESS_RESPONSE_ADD: u8 = 0x40;
 pub static PROCESS_CUSTOM_MSG: u8 = 0x80;
 
+pub static LOWER_HALVES: [u8; 6] = [READ_CLIENT_REQ, WRITE_CLIENT_REQ, READ_PROC, VALUE, WRITE_PROC, ACK];
+pub static UPPER_HALVES: [u8; 3] = [EXTERNAL_UPPER_HALF, PROCESS_RESPONSE_ADD, PROCESS_CUSTOM_MSG];
+
+pub static CONTENT_SIZE: usize = 4096;
 pub struct Configuration {
     /// Hmac key to verify and sign internal requests.
     pub hmac_system_key: [u8; 64],

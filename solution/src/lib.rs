@@ -96,7 +96,7 @@ pub mod sectors_manager_public {
 }
 
 pub mod transfer_public {
-    use crate::{ClientRegisterCommandContent, RegisterCommand, SectorVec, SystemRegisterCommand, SystemRegisterCommandContent, ACK, MAGIC_NUMBER, PROCESS_CUSTOM_MSG, PROCESS_RESPONSE_ADD, READ_CLIENT_REQ, READ_PROC, VALUE, WRITE_CLIENT_REQ, WRITE_PROC};
+    use crate::{ClientRegisterCommandContent, RegisterCommand, SectorVec, SystemRegisterCommand, SystemRegisterCommandContent, ACK, CONTENT_SIZE, EXTERNAL_UPPER_HALF, MAGIC_NUMBER, PROCESS_CUSTOM_MSG, PROCESS_RESPONSE_ADD, READ_CLIENT_REQ, READ_PROC, VALUE, WRITE_CLIENT_REQ, WRITE_PROC};
     use std::{alloc::System, io::{Error, ErrorKind}};
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
@@ -120,7 +120,7 @@ pub mod transfer_public {
     }
 
     async fn create_mac_or_get_error(writer: &mut (dyn AsyncWrite + Send + Unpin), hmac_key: &[u8], mut msg: Vec<u8>) -> Result<(), Error> {
-        let mut mac_res = HmacSha256::new_from_slice(hmac_key);
+        let mac_res = HmacSha256::new_from_slice(hmac_key);
                 
         match mac_res {
             Err(msg) => {return Err(Error::new(std::io::ErrorKind::InvalidInput, msg.to_string()));},
@@ -187,7 +187,7 @@ pub mod transfer_public {
     fn is_message_type_valid(msg_type: u8) -> bool {
         let upper_half = 0xF0 & msg_type;
         let lower_half = 0x0F & msg_type;
-        if (lower_half <= ACK) && (lower_half != 0x00) && (upper_half == 0x00 || upper_half == PROCESS_RESPONSE_ADD) {
+        if (lower_half <= ACK) && (lower_half != 0x00) && (upper_half == EXTERNAL_UPPER_HALF || upper_half == PROCESS_RESPONSE_ADD) {
             return true;
         }
         else if (upper_half == PROCESS_CUSTOM_MSG) {
@@ -195,6 +195,27 @@ pub mod transfer_public {
         }
 
         return false;
+    }
+
+    fn create_hmac_wrapper(hmac_key: &[u8]) -> Result<HmacSha256, Error> {
+        let mac_res = HmacSha256::new_from_slice(hmac_key);
+        match mac_res {
+            Err(msg) => {return Err(Error::new(std::io::ErrorKind::InvalidInput, msg.to_string()));},
+            Ok(res) => {Ok(res)}
+        }
+    }
+
+    fn verify_hmac_tag(message: &[u8], tag: &[u8], hmac_key: &[u8]) -> Result<bool, Error> {
+        let mac_res = create_hmac_wrapper(hmac_key);
+
+        match mac_res {
+            Err(e) => {return Err(e)},
+            Ok(mut mac) => {
+                mac.update(message);
+
+                return Ok(mac.verify_slice(tag).is_ok());
+            }
+        }
     }
 
     pub async fn deserialize_register_command(
@@ -218,12 +239,46 @@ pub mod transfer_public {
             let mut padding_rank_msg_type = vec![0; 4];
             data.read_exact(padding_rank_msg_type.as_mut()).await?;
 
-            let is_msg_type_correct = is_message_type_valid(padding_rank_msg_type[3]);
+            let msg_type = padding_rank_msg_type[3];
+
+            let is_msg_type_correct = is_message_type_valid(msg_type);
                 // }
             
             if !is_msg_type_correct {
                 continue;
             }
+
+            let upper_half = msg_type & 0xF0;
+            let lower_half = msg_type & 0x0F;
+
+            if upper_half == EXTERNAL_UPPER_HALF {
+                if (lower_half == READ_CLIENT_REQ) || (lower_half == WRITE_CLIENT_REQ) {
+                    let mut request_number: [u8; 8] = [0; 8];
+                    data.read_exact(request_number.as_mut()).await?;
+
+                    let mut sector_idx: [u8; 8] = [0; 8];
+                    data.read_exact(sector_idx.as_mut()).await?;
+
+                    msg.extend_from_slice(&padding_rank_msg_type);
+                    // msg.extend_from_slice(u64::from_be_bytes(request_number));
+                    msg.extend_from_slice(&request_number);
+                    msg.extend_from_slice(&sector_idx);
+
+                    if lower_half == WRITE_CLIENT_REQ {
+                        let mut content: [u8; CONTENT_SIZE] = [0; CONTENT_SIZE];
+
+                        data.read_exact(content.as_mut()).await?;
+                        msg.extend_from_slice(&content);
+                    }
+
+
+ 
+    
+                 }
+            }
+
+            
+
         }
 
         unimplemented!()
