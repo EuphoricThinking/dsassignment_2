@@ -147,21 +147,22 @@ pub mod transfer_public {
         msg.extend_from_slice(&vec_to_write);
     }
 
-    async fn is_magic_number_not_found(data: &mut (dyn AsyncRead + Send + Unpin)) -> Result<bool, Error> {
+    async fn is_magic_number_found(data: &mut (dyn AsyncRead + Send + Unpin)) -> Result<bool, Error> {
         let mut read_magic = vec![0; 4];
         let not_found = true;
 
-        let mut res = data.read_exact(read_magic.as_mut()).await;
+        // let mut res = data.read_exact(read_magic.as_mut()).await;
+        data.read_exact(&mut read_magic).await?;
 
         while not_found {
-            match res {
-                Err(ref e) if e.kind() == ErrorKind::UnexpectedEof => {
-                    return Ok(false)
-                }
-                Err(err) => {
-                    return Err(err);
-                }
-                Ok(_) => {
+            // match res {
+            //     Err(ref e) if e.kind() == ErrorKind::UnexpectedEof => {
+            //         return Ok(false)
+            //     }
+            //     Err(err) => {
+            //         return Err(err);
+            //     }
+            //     Ok(_) => {
                     if read_magic == MAGIC_NUMBER {
                         return Ok(true)
                     }
@@ -172,19 +173,37 @@ pub mod transfer_public {
                     temp.copy_from_slice(&read_magic[1..4]);
                     read_magic[0..3].copy_from_slice(&temp);
 
-                    res = data.read_exact(&mut read_magic[3..4]).await;
-                }
-            }
+                    // res = data.read_exact(&mut read_magic[3..4]).await;
+                    data.read_exact(&mut read_magic[3..4]).await?;
+
+                    //     }
+            // }
         }
 
-        Ok(true)
+        Ok(false)
 
     }
+
     pub async fn deserialize_register_command(
         data: &mut (dyn AsyncRead + Send + Unpin),
         hmac_system_key: &[u8; 64],
         hmac_client_key: &[u8; 32],
     ) -> Result<(RegisterCommand, bool), Error> {
+        // let is_magic_nr_found = is_magic_number_found(data).await;
+
+        // match is_magic_nr_found {
+        //     Err(e) => {return Err(e)},
+        //     Ok(false) => {return Err(Error::new(ErrorKind::UnexpectedEof, "No magic number found to the end of the message"))},
+        //     Ok(true) => {
+        is_magic_number_found(data).await?;
+        let mut msg = Vec::new();
+        msg.extend_from_slice(&MAGIC_NUMBER);
+
+        let mut padding_rank_msg_type = vec![0; 4];
+        data.read_exact(padding_rank_msg_type.as_mut()).await?;
+
+            // }
+        }
 
         unimplemented!()
     }
