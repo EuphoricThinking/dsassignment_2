@@ -97,11 +97,11 @@ pub mod sectors_manager_public {
 
 pub mod transfer_public {
     use crate::{ClientRegisterCommandContent, RegisterCommand, SectorVec, SystemRegisterCommand, SystemRegisterCommandContent, ACK, MAGIC_NUMBER, READ_CLIENT_REQ, READ_PROC, VALUE, WRITE_CLIENT_REQ, WRITE_PROC};
-    use std::{alloc::System, io::Error};
+    use std::{alloc::System, io::{Error, ErrorKind}};
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
     // use hmac::digest::KeyInit;
-    use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+    use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
     // use sha2::Sha256;
     // use hmac::{Hmac, Mac};
@@ -147,12 +147,45 @@ pub mod transfer_public {
         msg.extend_from_slice(&vec_to_write);
     }
 
-    
+    async fn is_magic_number_not_found(data: &mut (dyn AsyncRead + Send + Unpin)) -> Result<bool, Error> {
+        let mut read_magic = vec![0; 4];
+        let not_found = true;
+
+        let mut res = data.read_exact(read_magic.as_mut()).await;
+
+        while not_found {
+            match res {
+                Err(ref e) if e.kind() == ErrorKind::UnexpectedEof => {
+                    return Ok(false)
+                }
+                Err(err) => {
+                    return Err(err);
+                }
+                Ok(_) => {
+                    if read_magic == MAGIC_NUMBER {
+                        return Ok(true)
+                    }
+
+                    // let (first_three, last_byte) = read_magic.split_at_mut(3);
+                    // first_three.copy_from_slice(&read_magic[1..4]);
+                    let mut temp: [u8; 3] = [0; 3];
+                    temp.copy_from_slice(&read_magic[1..4]);
+                    read_magic[0..3].copy_from_slice(&temp);
+
+                    res = data.read_exact(&mut read_magic[3..4]).await;
+                }
+            }
+        }
+
+        Ok(true)
+
+    }
     pub async fn deserialize_register_command(
         data: &mut (dyn AsyncRead + Send + Unpin),
         hmac_system_key: &[u8; 64],
         hmac_client_key: &[u8; 32],
     ) -> Result<(RegisterCommand, bool), Error> {
+
         unimplemented!()
     }
 
