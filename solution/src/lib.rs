@@ -138,7 +138,7 @@ pub mod transfer_public {
         }
     }
 
-    fn write_val_write_proc(mut msg: Vec<u8>, timestamp: &u64, write_rank: &u8, sector_data: &SectorVec) -> () {
+    fn write_val_write_proc(msg: &mut Vec<u8>, timestamp: &u64, write_rank: &u8, sector_data: &SectorVec) -> () {
         msg.extend_from_slice(&timestamp.to_be_bytes());
         let pad_val: [u8; 7] = [0; 7];
         msg.extend_from_slice(&pad_val);
@@ -191,7 +191,7 @@ pub mod transfer_public {
         if (lower_half <= ACK) && (lower_half != 0x00) && (upper_half == EXTERNAL_UPPER_HALF || upper_half == PROCESS_RESPONSE_ADD) {
             return true;
         }
-        else if (upper_half == PROCESS_CUSTOM_MSG) {
+        else if upper_half == PROCESS_CUSTOM_MSG {
             return true;
         }
 
@@ -408,7 +408,7 @@ pub mod transfer_public {
                     ClientRegisterCommandContent::Read => {
                         msg.push(READ_CLIENT_REQ);
                     },
-                    ClientRegisterCommandContent::Write { data } => {
+                    ClientRegisterCommandContent::Write { .. } => {
                         msg.push(WRITE_CLIENT_REQ);
                     },
                 }
@@ -463,12 +463,12 @@ pub mod transfer_public {
                         
                         // let SectorVec(vec_to_write) = sector_data;
                         // msg.extend_from_slice(&vec_to_write);
-                        write_val_write_proc(msg, timestamp, write_rank, sector_data);
+                        write_val_write_proc(&mut msg, timestamp, write_rank, sector_data);
 
                         create_mac_or_get_error(writer, hmac_key, msg).await?
                     },
                     SystemRegisterCommandContent::WriteProc { timestamp, write_rank, data_to_write } => {
-                        write_val_write_proc(msg, timestamp, write_rank, data_to_write);
+                        write_val_write_proc(&mut msg, timestamp, write_rank, data_to_write);
 
                         // writer.write_all(&timestamp.to_be_bytes()).await?;
                         create_mac_or_get_error(writer, hmac_key, msg).await?
