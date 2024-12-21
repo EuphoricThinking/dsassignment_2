@@ -381,12 +381,14 @@ pub mod transfer_public {
                     // }
                  }
             }
-
+            else {
+                return Err(Error::new(ErrorKind::Other, "Not implemented other than basic messages"));
+            }
             
-
         }
 
-        unimplemented!()
+        return Err(Error::new(ErrorKind::Other, "Not implemented other than basic messages"));
+        // unimplemented!()
     }
 
     pub async fn serialize_register_command(
@@ -437,7 +439,9 @@ pub mod transfer_public {
                 //         writer.write_all(&msg).await?
                 //     }
                 // }
-                create_mac_or_get_error(writer, hmac_key, msg).await?
+                create_mac_or_get_error(writer, hmac_key, msg).await?;
+
+                Ok(())
             },
             RegisterCommand::System(system_rcmd) => {
                 let padding: [u8; 2] = [0; 2];
@@ -453,7 +457,8 @@ pub mod transfer_public {
 
                 match &system_rcmd.content {
                     SystemRegisterCommandContent::ReadProc => {
-                        create_mac_or_get_error(writer, hmac_key, msg).await?
+                        create_mac_or_get_error(writer, hmac_key, msg).await?;
+                        Ok(())
                     },
                     SystemRegisterCommandContent::Value{timestamp, write_rank, sector_data} => {
                         // msg.extend_from_slice(&timestamp.to_be_bytes());
@@ -465,21 +470,24 @@ pub mod transfer_public {
                         // msg.extend_from_slice(&vec_to_write);
                         write_val_write_proc(&mut msg, timestamp, write_rank, sector_data);
 
-                        create_mac_or_get_error(writer, hmac_key, msg).await?
+                        create_mac_or_get_error(writer, hmac_key, msg).await?;
+                        Ok(())
                     },
                     SystemRegisterCommandContent::WriteProc { timestamp, write_rank, data_to_write } => {
                         write_val_write_proc(&mut msg, timestamp, write_rank, data_to_write);
 
                         // writer.write_all(&timestamp.to_be_bytes()).await?;
-                        create_mac_or_get_error(writer, hmac_key, msg).await?
+                        create_mac_or_get_error(writer, hmac_key, msg).await?;
+                        Ok(())
                     },
                     SystemRegisterCommandContent::Ack => {
-                        create_mac_or_get_error(writer, hmac_key, msg).await?
+                        create_mac_or_get_error(writer, hmac_key, msg).await?;
+                        Ok(())
                     },
                 }
             }
         }
-        unimplemented!()
+        // unimplemented!()
     }
 }
 
