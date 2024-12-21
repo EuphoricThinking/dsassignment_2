@@ -72,8 +72,61 @@ pub mod atomic_register_public {
 
 pub mod sectors_manager_public {
     use crate::{SectorIdx, SectorVec};
+    use std::collections::HashSet;
     use std::path::PathBuf;
     use std::sync::Arc;
+    use sha2::Sha256;
+    use tokio::sync::Mutex;
+
+    
+    struct ProcessSectorManager {
+        root_dir: PathBuf,
+        // RWLock to be implemented
+        written_sectors: Arc<Mutex<HashSet<u64>>>,
+        hasher: Sha256,
+    }
+
+    impl ProcessSectorManager {
+        // timestamp_writerank separated by "_"
+        fn create_filename(timestamp: u64, write_rank: u8) -> String {
+            return timestamp.to_string() + "_" + &write_rank.to_string();
+        }
+
+        fn get_timestamp_write_rank_from_filename(filename: String) -> (u64, u8) {
+            let split_pair: Vec<&str> = filename.split("_").collect();
+            let timestamp: u64 = split_pair[0].parse().unwrap();
+            let write_rank: u8 = split_pair[1].parse().unwrap();
+
+            (timestamp, write_rank)
+
+        } 
+    }
+
+    #[async_trait::async_trait]
+    impl SectorsManager for ProcessSectorManager {
+        async fn read_data(&self, idx: SectorIdx) -> SectorVec {
+            unimplemented!()
+        }
+
+        async fn read_metadata(&self, idx: SectorIdx) -> (u64, u8) {
+            // Every atomic register has its own subdirectory for the sector,
+            // therefore we can just access the right subdirectory,
+            // once knwoing the pattern
+
+            // onlu &self - this is not a monitor
+
+            // if subdir does not exist - not written yet
+            let sector_path = self.root_dir.join(idx.to_string());
+
+            // After the recovery - there should be destination file and tmp directory
+
+            unimplemented!()
+        }
+
+        async fn write(&self, idx: SectorIdx, sector: &(SectorVec, u64, u8)) {
+            unimplemented!()
+        }
+    }
 
     #[async_trait::async_trait]
     pub trait SectorsManager: Send + Sync {
