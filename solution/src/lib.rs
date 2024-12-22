@@ -76,6 +76,7 @@ pub mod sectors_manager_public {
     use std::path::PathBuf;
     use std::sync::Arc;
     use sha2::Sha256;
+    use tokio::fs::{DirEntry, ReadDir};
     use tokio::sync::Mutex;
 
     
@@ -100,6 +101,7 @@ pub mod sectors_manager_public {
             (timestamp, write_rank)
 
         } 
+
     }
 
     #[async_trait::async_trait]
@@ -117,6 +119,23 @@ pub mod sectors_manager_public {
 
             // if subdir does not exist - not written yet
             let sector_path = self.root_dir.join(idx.to_string());
+
+            let mut entries = tokio::fs::read_dir(sector_path).await;
+
+            match entries {
+                Err(e) => {
+                    // Directory not created yet
+                    return (0, 0);
+                }
+                Ok(mut entry_iter) => {
+                    let mut entry = entry_iter.next_entry().await;
+                    if entry.is_err() {
+                        return 
+                    }
+                }
+            }
+
+
 
             // After the recovery - there should be destination file and tmp directory
 
