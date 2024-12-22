@@ -76,7 +76,7 @@ pub mod sectors_manager_public {
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
     use sha2::Sha256;
-    use tokio::fs::{DirEntry, ReadDir};
+    use tokio::fs::{DirEntry, ReadDir, File};
     use tokio::sync::Mutex;
     use uuid::timestamp;
     use std::io::Error;
@@ -98,6 +98,22 @@ pub mod sectors_manager_public {
 
         fn get_sector_dir(&self, idx: SectorIdx) -> PathBuf {
             return self.root_dir.join(idx.to_string());
+        }
+
+        fn sector_dir_exists(&self, dirname: &PathBuf) -> bool {
+            let checked = dirname.try_exists();
+            match checked {
+                Err(_) => false,
+                Ok(if_exists) => if_exists,
+            }
+        }
+
+        async fn sync_dir(&self, dirname: &PathBuf) -> () {
+            tokio::fs::File::open(&self.root_dir).await.unwrap().sync_data().await.unwrap();
+        }
+
+        fn get_tmp_dir_for_sector(&self, sector_path: &PathBuf) -> PathBuf {
+            return sector_path.join("tmp");
         }
 
         fn get_timestamp_write_rank_from_filename(&self, path: PathBuf) -> (u64, u8) {
@@ -233,6 +249,35 @@ pub mod sectors_manager_public {
         }
 
         async fn write(&self, idx: SectorIdx, sector: &(SectorVec, u64, u8)) {
+            let sector_path = self.get_sector_dir(idx);
+            let tmp_sector_path = self.get_tmp_dir_for_sector(&sector_path);
+
+            // if there is already a file
+            // write first tmp
+            // then remove dst
+            // recovery - check if tmp exist
+            let sector_exists = self.sector_dir_exists(&sector_path);
+
+            // create a new subdir and fsync if does not exist
+            if !sector_exists {
+                // I am the only register responsible for the the sector creation,
+                // therefore I can create the dir and then fsync 
+                File::create(&sector_path).await.unwrap();
+                // sync root dir
+                // tokio::fs::File::open(&self.root_dir).await.unwrap().sync_data().await.unwrap();
+                self.sync_dir(&self.root_dir).await;
+
+                // create tmp dir
+                File::create(tmp_sector_path).await.unwrap();
+                // sync sector dir
+                self.sync_dir(&sector_path).await;
+            }
+
+            // if the sector exists - there should be dst file and a tmp folder
+            // from recovery
+
+
+
             unimplemented!()
         }
     }
