@@ -96,6 +96,10 @@ pub mod sectors_manager_public {
             return timestamp.to_string() + "_" + &write_rank.to_string();
         }
 
+        fn get_sector_dir(&self, idx: SectorIdx) -> PathBuf {
+            return self.root_dir.join(idx.to_string());
+        }
+
         fn get_timestamp_write_rank_from_filename(&self, path: PathBuf) -> (u64, u8) {
 
             
@@ -172,10 +176,13 @@ pub mod sectors_manager_public {
             // onlu &self - this is not a monitor
 
             // if subdir does not exist - not written yet
-            let sector_path = self.root_dir.join(idx.to_string());
+            // let sector_path = self.root_dir.join(idx.to_string());
+            let sector_path = self.get_sector_dir(idx);
 
             let mut entries_res = tokio::fs::read_dir(sector_path).await;
 
+
+            // TODO change to while loop?
             match entries_res {
                 Err(_) => return (0, 0),
                 Ok(mut entry_reader) => {
