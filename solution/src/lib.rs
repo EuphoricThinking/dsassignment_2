@@ -75,7 +75,8 @@ pub mod sectors_manager_public {
     use std::collections::HashSet;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
-    use sha2::Sha256;
+    use hmac::digest::generic_array::{ArrayLength, GenericArray};
+    use sha2::{Sha256, Digest};
     use tokio::fs::{DirEntry, ReadDir, File};
     use tokio::sync::Mutex;
     use uuid::timestamp;
@@ -106,6 +107,21 @@ pub mod sectors_manager_public {
                 Err(_) => false,
                 Ok(if_exists) => if_exists,
             }
+        }
+
+        fn get_checksum(&self, value: &[u8]) -> Vec<u8> {
+            let mut hasher = self.hasher.clone();
+            hasher.update(value);
+            let checksum = hasher.finalize();
+
+            return checksum.to_vec();
+        }
+
+        fn get_file_content_with_checksum(&self, value: &Vec<u8>, checksum: Vec<u8>) -> Vec<u8> {
+            let mut content = value.clone();
+            content.extend(checksum);
+
+            return content;
         }
 
         async fn sync_dir(&self, dirname: &PathBuf) -> () {
@@ -275,7 +291,9 @@ pub mod sectors_manager_public {
 
             // if the sector exists - there should be dst file and a tmp folder
             // from recovery
-
+            let (SectorVec(value), timestamp, write_rank) = sector;
+            let checksum = self.get_checksum(&value);
+            let content_with_checksum = self.get_file_content_with_checksum(value, checksum);
 
 
             unimplemented!()
