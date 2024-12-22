@@ -19,6 +19,8 @@ pub static PROCESS_CUSTOM_MSG: u8 = 0x80;
 pub static LOWER_HALVES: [u8; 6] = [READ_CLIENT_REQ, WRITE_CLIENT_REQ, READ_PROC, VALUE, WRITE_PROC, ACK];
 pub static UPPER_HALVES: [u8; 3] = [EXTERNAL_UPPER_HALF, PROCESS_RESPONSE_ADD, PROCESS_CUSTOM_MSG];
 
+pub static TIMESTAMP_WR_RANK_SEP: & 'static str = ".";
+
 pub static CONTENT_SIZE: usize = 4096;
 pub struct Configuration {
     /// Hmac key to verify and sign internal requests.

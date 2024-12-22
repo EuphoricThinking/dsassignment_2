@@ -73,11 +73,14 @@ pub mod atomic_register_public {
 pub mod sectors_manager_public {
     use crate::{SectorIdx, SectorVec};
     use std::collections::HashSet;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::sync::Arc;
     use sha2::Sha256;
     use tokio::fs::{DirEntry, ReadDir};
     use tokio::sync::Mutex;
+    use uuid::timestamp;
+    use std::io::Error;
+    use std::ffi::OsStr;
 
     
     struct ProcessSectorManager {
@@ -89,18 +92,69 @@ pub mod sectors_manager_public {
 
     impl ProcessSectorManager {
         // timestamp_writerank separated by "_"
-        fn create_filename(timestamp: u64, write_rank: u8) -> String {
+        fn create_filename(&self, timestamp: u64, write_rank: u8) -> String {
             return timestamp.to_string() + "_" + &write_rank.to_string();
         }
 
-        fn get_timestamp_write_rank_from_filename(filename: String) -> (u64, u8) {
-            let split_pair: Vec<&str> = filename.split("_").collect();
-            let timestamp: u64 = split_pair[0].parse().unwrap();
-            let write_rank: u8 = split_pair[1].parse().unwrap();
+        fn get_timestamp_write_rank_from_filename(&self, path: PathBuf) -> (u64, u8) {
 
-            (timestamp, write_rank)
+            
+                    // let timestamp_opt = filename.file_stem();//parse().unwrap();
+                    // let write_rank_opt = filename.extension(); //.parse().unwrap();
 
-        } 
+                    // if let Some(timestamp) = timestamp_opt {
+                    //     if let Some(write_rank) = write_rank_opt {
+                    //         let time: u8 = timestamp.to_str().parse().unwrap();
+                    //     }
+                    // }
+                    let filename = path.file_name();
+                    if let Some(fname) = filename {
+                        let fname_str = fname.to_str();
+
+                        if let Some(timestamp_rank) = fname_str {
+                            let split_pair: Vec<&str> = timestamp_rank.split("_").collect();
+
+                            let timestamp: u64 = split_pair[0].parse().unwrap();
+                            let write_rank: u8 = split_pair[1].parse().unwrap();
+
+                            return (timestamp, write_rank);
+                        }
+
+                    }
+
+                    // (0, 0)
+                    // let fname = path.file_name().to_str();
+                    (0, 0)
+                    // (timestamp, write_rank)
+                }
+            
+            // let split_pair: Vec<&str> = filename.split("_").collect();
+            // let timestamp: u64 = split_pair[0].parse().unwrap();
+            // let write_rank: u8 = split_pair[1].parse().unwrap();
+            
+
+
+
+        // fn handle_filename_retrieval_get_metadata(&self, filename: Option<&OsStr>) -> (u64, u8) {
+        //     match filename {
+        //         None => return (0, 0),
+        //         Some(fname) => return self.get_timestamp_write_rank_from_filename(fname),
+        //     }
+        // }
+
+        async fn get_entry(&self, entry_reader: &mut ReadDir) -> Option<DirEntry> {
+            
+                    let fst_entry = entry_reader.next_entry().await;
+                    match fst_entry {
+                        Err(_) => return None,
+                        Ok(None) => return None,
+                        Ok(Some(entry1)) => {
+                            return Some(entry1);
+                        }
+                    
+            }
+            // return None;
+        }
 
     }
 
@@ -120,17 +174,46 @@ pub mod sectors_manager_public {
             // if subdir does not exist - not written yet
             let sector_path = self.root_dir.join(idx.to_string());
 
-            let mut entries = tokio::fs::read_dir(sector_path).await;
+            let mut entries_res = tokio::fs::read_dir(sector_path).await;
 
-            match entries {
-                Err(e) => {
-                    // Directory not created yet
-                    return (0, 0);
-                }
-                Ok(mut entry_iter) => {
-                    let mut entry = entry_iter.next_entry().await;
-                    if entry.is_err() {
-                        return 
+            match entries_res {
+                Err(_) => return (0, 0),
+                Ok(mut entry_reader) => {
+                    // let fst_entry = entry_reader.next_entry().await;
+                    // match fst_entry {
+                    //     Err(_) => return (0,0),
+                    //     Ok(None) => return (0,0),
+                    //     Ok(Some(entry1)) => {
+                    //         if !entry1.path().is_file() {
+                    //             // look for the next entry
+
+                    //         }
+                    //     }
+                    // }
+                    let first_entry = self.get_entry(&mut entry_reader).await;
+                    match first_entry {
+                        None => return (0, 0),
+                        Some(entry1) => {
+                            let entry1_path = entry1.path();
+                            if !entry1_path.is_file() {
+                                // tmp dir - we are looking for more entries
+                                let second_entry = self.get_entry(&mut entry_reader).await;
+
+                                match second_entry {
+                                    None => {return (0, 0)},
+                                    Some(entry2) => {
+                                        let entry2_path = entry2.path();
+                                        if entry2.path().is_file() {
+                                            return self.get_timestamp_write_rank_from_filename(entry2_path);
+                                        }
+                                    }
+                                }
+                            }
+                            else {
+                                // this is the destinationf file
+                                return self.get_timestamp_write_rank_from_filename(entry1_path);
+                            }
+                        }
                     }
                 }
             }
