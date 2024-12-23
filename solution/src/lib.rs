@@ -251,57 +251,6 @@ pub mod sectors_manager_public {
             }
         }
 
-            // let entries_res = tokio::fs::read_dir(sector_path).await;
-
-
-            // // TODO change to while loop?
-            // match entries_res {
-            //     Err(_) => return (0, 0),
-            //     Ok(mut entry_reader) => {
-            //         let dst_file = self.get_current_dst_file_path(&mut entry_reader).await;
-            //         match dst_file {
-            //             None => return (0, 0),
-            //             Some(dst_path) => return self.get_timestamp_write_rank_from_path(dst_path),
-            //         }
-                    // let fst_entry = entry_reader.next_entry().await;
-                    // match fst_entry {
-                    //     Err(_) => return (0,0),
-                    //     Ok(None) => return (0,0),
-                    //     Ok(Some(entry1)) => {
-                    //         if !entry1.path().is_file() {
-                    //             // look for the next entry
-
-                    //         }
-                    //     }
-                    // }
-                    // let first_entry = self.get_entry(&mut entry_reader).await;
-                    // match first_entry {
-                    //     None => return (0, 0),
-                    //     Some(entry1) => {
-                    //         let entry1_path = entry1.path();
-                    //         if !entry1_path.is_file() {
-                    //             // tmp dir - we are looking for more entries
-                    //             let second_entry = self.get_entry(&mut entry_reader).await;
-
-                    //             match second_entry {
-                    //                 None => {return (0, 0)},
-                    //                 Some(entry2) => {
-                    //                     let entry2_path = entry2.path();
-                    //                     if entry2.path().is_file() {
-                    //                         return self.get_timestamp_write_rank_from_filename(entry2_path);
-                    //                     }
-                    //                 }
-                    //             }
-                    //         }
-                    //         else {
-                    //             // this is the destinationf file
-                    //             return self.get_timestamp_write_rank_from_filename(entry1_path);
-                    //         }
-                    //     }
-                    // }
-
-
-
             // After the recovery - there should be destination file and tmp directory
 
             // unimplemented!()
@@ -364,7 +313,7 @@ pub mod sectors_manager_public {
             // even if the crash happens during writing of the dst file,
             // the content of the most recent write might be recovered
             // from tmp
-            let old_dst_path = self.get_current_dst_file_path(&sector_path);
+            let old_dst_path = self.get_current_dst_file_path(&sector_path).await;
 
             if let Some(old_path) = old_dst_path {
                 // If there have been dst file
@@ -378,12 +327,12 @@ pub mod sectors_manager_public {
 
             // Write data without checksum to destination
             let dst_path = self.create_new_dst_file_path(&sector_path, &metadata_filename);
-            let mut dst_file = File::create(dst_path).await;
+            let mut dst_file = File::create(dst_path).await.unwrap();
             dst_file.write_all(value).await.unwrap();
 
             unimplemented!()
         }
-    
+    }
 
     #[async_trait::async_trait]
     pub trait SectorsManager: Send + Sync {
@@ -404,6 +353,7 @@ pub mod sectors_manager_public {
         unimplemented!()
     }
 }
+
 
 pub mod transfer_public {
     use crate::{ClientCommandHeader, ClientRegisterCommand, ClientRegisterCommandContent, RegisterCommand, SectorVec, SystemCommandHeader, SystemRegisterCommand, SystemRegisterCommandContent, ACK, CONTENT_SIZE, EXTERNAL_UPPER_HALF, MAGIC_NUMBER, PROCESS_CUSTOM_MSG, PROCESS_RESPONSE_ADD, READ_CLIENT_REQ, READ_PROC, VALUE, WRITE_CLIENT_REQ, WRITE_PROC};
