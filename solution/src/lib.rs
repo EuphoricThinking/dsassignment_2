@@ -180,6 +180,38 @@ pub mod sectors_manager_public {
             self.sync_dir(parent_dir_path).await;
         }
 
+        async fn get_tmp_content_or_none_if_err(&self, tmp_path: &PathBuf) -> Option<Vec<u8>> {
+            // check checksum
+            let content_res = tokio::fs::read(&tmp_path).await;
+            match content_res {
+                Err(_) => return None,
+                Ok(content) => {
+                    if content.len() < 32 {
+                        // incorrect tmp, too short
+                        return None;
+                    }
+                    else {
+                        // TODO use custom function?
+                        let checksum = &content[content.len() - 32..];
+                        let file_content = &content[..content.len()-32];
+    
+                        // let mut hasher = self.hasher.clone();
+                        // hasher.update(&file_content);
+                        // let calculated_checksum = hasher.finalize();
+                        let calculated_checksum = self.get_checksum(file_content);
+    
+                        if calculated_checksum.as_slice() == checksum {
+                            // correct checksum
+                            return Some(file_content.to_vec());
+                        }
+                        else {
+                            return None;
+                        }
+                    }
+                }
+            }
+        }
+
         async fn recovery(&self) {
             /*
             iterate over sector_dirs
@@ -206,18 +238,19 @@ pub mod sectors_manager_public {
                         let tmp_dir_exists = self.sector_file_dir_exists(&tmp_dir_path).await;
 
                         if !tmp_dir_exists {
-                            File::create(tmp_dir_path).await.unwrap();
+                            File::create(&tmp_dir_path).await.unwrap();
                             self.sync_dir(&sector_path).await;
                             // there should be no other files and dirs to check
                         }
                         else {
                             // there is tmp folder
                             // check if there is a file
-                            let tmp_iter_res = tokio::fs::read_dir(tmp_dir_path).await;
+                            let tmp_iter_res = tokio::fs::read_dir(&tmp_dir_path).await;
                             if let Ok(mut tmp_iterator) = tmp_iter_res {
                                 // there should be one tmp file
                                 if let Ok(tmp_file_result) = tmp_iterator.next_entry().await {
                                     if let Some(tmp_file) = tmp_file_result {
+                                        let tmp_file_path = tmp_file.path();
                                         // there is tmp file
 
                                         // check if tmp is correct
@@ -225,6 +258,35 @@ pub mod sectors_manager_public {
                                         // remove dst if exists, write dst, remove tmp
                                         // else:
                                         // remove tmp, proceed
+                                        let tmp_content = self.get_tmp_content_or_none_if_err(&tmp_file_path).await;
+
+                                        match tmp_content {
+                                            None => {
+                                                // checksum is incorrect - delete the file and proceed
+                                                self.remove_file(&tmp_file_path, &tmp_dir_path).await;
+                                            },
+                                            Some(content) => {
+                                                // tmp file is correct
+                                               let dst_path_res = self.get_current_dst_file_path(&sector_path).await;
+
+                                               if let Some(dst_path) = dst_path_res {
+                                                // remove previous dst
+                                                self.remove_file(&dst_path, &sector_path).await;
+                                               }
+
+                                               let metadata_filename = tmp_file.file_name();
+
+                                               let new_dst_path = sector_path.join(metadata_filename);
+                                               let new_dst_file_res = File::create(new_dst_path).await;
+
+                                               if let Ok(mut new_dst_file) = new_dst_file_res {
+                                                self.write_to_file_sync_file_and_dir(&mut new_dst_file, &sector_path, &content).await;
+
+                                                    self.remove_file(&tmp_file_path, &tmp_dir_path).await;
+                                               }
+
+                                            }
+                                        }
                                     }
                                 }
                                 // otherwise:
