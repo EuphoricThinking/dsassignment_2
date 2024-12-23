@@ -455,48 +455,52 @@ pub mod sectors_manager_public {
             let metadata_filename = self.create_filename(timestamp, write_rank);
             // tmp file in tmp dir, with metadata as filename
             let tmp_file_path = self.create_tmp_path_name(&tmp_dir_per_sector_path, &metadata_filename);
-            let mut tmp_file = File::create(&tmp_file_path).await.unwrap();
+            let mut tmp_file_res = File::create(&tmp_file_path).await;
 
             // write data with checksum to tmp in tmp dir
             // fsync file
             // fsync tmp dir
-            self.write_to_file_sync_file_and_dir(&mut tmp_file, &tmp_dir_per_sector_path, &content_with_checksum).await;
+            if let Ok(mut tmp_file) = tmp_file_res {
 
-            // tmp_file.write_all(&content_with_checksum).await.unwrap();
-            // tmp_file.sync_data().await.unwrap();
-            // self.sync_dir(&tmp_dir_per_sector_path).await;
+                self.write_to_file_sync_file_and_dir(&mut tmp_file, &tmp_dir_per_sector_path, &content_with_checksum).await;
 
-            // tmp file should be fully written at this moment
-            // even if the crash happens during writing of the dst file,
-            // the content of the most recent write might be recovered
-            // from tmp
-            let old_dst_path = self.get_current_dst_file_path(&sector_path).await;
+                // tmp_file.write_all(&content_with_checksum).await.unwrap();
+                // tmp_file.sync_data().await.unwrap();
+                // self.sync_dir(&tmp_dir_per_sector_path).await;
 
-            if let Some(old_path) = old_dst_path {
-                // If there have been dst file
-                /*
-                Structure:
-                /sector_dir
-                    - dst_file
-                 */
-                self.remove_file(&old_path, &sector_path).await;
+                // tmp file should be fully written at this moment
+                // even if the crash happens during writing of the dst file,
+                // the content of the most recent write might be recovered
+                // from tmp
+                let old_dst_path = self.get_current_dst_file_path(&sector_path).await;
+
+                if let Some(old_path) = old_dst_path {
+                    // If there have been dst file
+                    /*
+                    Structure:
+                    /sector_dir
+                        - dst_file
+                    */
+                    self.remove_file(&old_path, &sector_path).await;
+                }
+
+                // Write data without checksum to the destination
+                // sync dst_file
+                // sync dst_dir (sector)
+                let dst_path = self.create_new_dst_file_path(&sector_path, &metadata_filename);
+                let mut dst_file_res = File::create(dst_path).await;
+                if let Ok(mut dst_file) = dst_file_res {
+                    self.write_to_file_sync_file_and_dir(&mut dst_file, &sector_path, value).await;
+
+                    // dst_file.write_all(value).await.unwrap();
+                    // dst_file.sync_data().await.unwrap();
+                    // self.sync_dir(&sector_path).await;
+
+                    // remove tmp_file
+                    self.remove_file(&tmp_file_path, &tmp_dir_per_sector_path).await;
+                }
             }
-
-            // Write data without checksum to the destination
-            // sync dst_file
-            // sync dst_dir (sector)
-            let dst_path = self.create_new_dst_file_path(&sector_path, &metadata_filename);
-            let mut dst_file = File::create(dst_path).await.unwrap();
-            self.write_to_file_sync_file_and_dir(&mut dst_file, &sector_path, value).await;
-
-            // dst_file.write_all(value).await.unwrap();
-            // dst_file.sync_data().await.unwrap();
-            // self.sync_dir(&sector_path).await;
-
-            // remove tmp_file
-            self.remove_file(&tmp_file_path, &tmp_dir_per_sector_path).await;
-
-            unimplemented!()
+            // unimplemented!()
         }
     }
 
