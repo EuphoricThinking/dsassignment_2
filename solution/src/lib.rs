@@ -129,6 +129,19 @@ pub mod sectors_manager_public {
             return content;
         }
 
+        async fn get_dst_filename(&self, dir_iterator: &mut ReadDir) -> Option<PathBuf> {
+            while let Ok(entry) = dir_iterator.next_entry().await {
+                if let Some(dir_entry) = entry {
+                    let entry_path = dir_entry.path();
+                    if entry_path.is_file() {
+                        return Some(entry_path);
+                    }
+                }
+            }
+
+            None
+        }
+
         async fn sync_dir(&self, dirname: &PathBuf) -> () {
             tokio::fs::File::open(&self.root_dir).await.unwrap().sync_data().await.unwrap();
         }
@@ -143,14 +156,14 @@ pub mod sectors_manager_public {
 
         async fn remove_file(&self, filepath: &PathBuf, parent_dir_path: &PathBuf) -> () {
             // remove tmpfile
-            let tmp_remove_result = tokio::fs::remove_file(filepath).await.unwrap();
+            tokio::fs::remove_file(filepath).await.unwrap();
     
     
             // sync key_dir
             tokio::fs::File::open(&parent_dir_path).await.unwrap().sync_data().await.unwrap();
         }
 
-        fn get_timestamp_write_rank_from_filename(&self, path: PathBuf) -> (u64, u8) {
+        fn get_timestamp_write_rank_from_path(&self, path: PathBuf) -> (u64, u8) {
 
             
                     // let timestamp_opt = filename.file_stem();//parse().unwrap();
@@ -229,13 +242,18 @@ pub mod sectors_manager_public {
             // let sector_path = self.root_dir.join(idx.to_string());
             let sector_path = self.get_sector_dir(idx);
 
-            let mut entries_res = tokio::fs::read_dir(sector_path).await;
+            let entries_res = tokio::fs::read_dir(sector_path).await;
 
 
             // TODO change to while loop?
             match entries_res {
                 Err(_) => return (0, 0),
                 Ok(mut entry_reader) => {
+                    let dst_file = self.get_dst_filename(&mut entry_reader).await;
+                    match dst_file {
+                        None => return (0, 0),
+                        Some(dst_path) => return self.get_timestamp_write_rank_from_path(dst_path),
+                    }
                     // let fst_entry = entry_reader.next_entry().await;
                     // match fst_entry {
                     //     Err(_) => return (0,0),
@@ -247,31 +265,31 @@ pub mod sectors_manager_public {
                     //         }
                     //     }
                     // }
-                    let first_entry = self.get_entry(&mut entry_reader).await;
-                    match first_entry {
-                        None => return (0, 0),
-                        Some(entry1) => {
-                            let entry1_path = entry1.path();
-                            if !entry1_path.is_file() {
-                                // tmp dir - we are looking for more entries
-                                let second_entry = self.get_entry(&mut entry_reader).await;
+                    // let first_entry = self.get_entry(&mut entry_reader).await;
+                    // match first_entry {
+                    //     None => return (0, 0),
+                    //     Some(entry1) => {
+                    //         let entry1_path = entry1.path();
+                    //         if !entry1_path.is_file() {
+                    //             // tmp dir - we are looking for more entries
+                    //             let second_entry = self.get_entry(&mut entry_reader).await;
 
-                                match second_entry {
-                                    None => {return (0, 0)},
-                                    Some(entry2) => {
-                                        let entry2_path = entry2.path();
-                                        if entry2.path().is_file() {
-                                            return self.get_timestamp_write_rank_from_filename(entry2_path);
-                                        }
-                                    }
-                                }
-                            }
-                            else {
-                                // this is the destinationf file
-                                return self.get_timestamp_write_rank_from_filename(entry1_path);
-                            }
-                        }
-                    }
+                    //             match second_entry {
+                    //                 None => {return (0, 0)},
+                    //                 Some(entry2) => {
+                    //                     let entry2_path = entry2.path();
+                    //                     if entry2.path().is_file() {
+                    //                         return self.get_timestamp_write_rank_from_filename(entry2_path);
+                    //                     }
+                    //                 }
+                    //             }
+                    //         }
+                    //         else {
+                    //             // this is the destinationf file
+                    //             return self.get_timestamp_write_rank_from_filename(entry1_path);
+                    //         }
+                    //     }
+                    // }
                 }
             }
 
@@ -279,7 +297,7 @@ pub mod sectors_manager_public {
 
             // After the recovery - there should be destination file and tmp directory
 
-            unimplemented!()
+            // unimplemented!()
         }
 
 
