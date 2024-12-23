@@ -137,6 +137,19 @@ pub mod sectors_manager_public {
             return sector_path.join("tmp");
         }
 
+        fn get_dst_file_path(&self, sector_path: &PathBuf, metadata_filename: &String) -> PathBuf {
+            return sector_path.join(metadata_filename);
+        }
+
+        async fn remove_file(&self, filepath: &PathBuf, parent_dir_path: &PathBuf) -> () {
+            // remove tmpfile
+            let tmp_remove_result = tokio::fs::remove_file(filepath).await.unwrap();
+    
+    
+            // sync key_dir
+            tokio::fs::File::open(&parent_dir_path).await.unwrap().sync_data().await.unwrap();
+        }
+
         fn get_timestamp_write_rank_from_filename(&self, path: PathBuf) -> (u64, u8) {
 
             
@@ -269,6 +282,17 @@ pub mod sectors_manager_public {
             unimplemented!()
         }
 
+
+        /*
+            Structure:
+            /root
+                /sector_dir
+                    - dst_file
+                    /tmp_dir
+                        - tmp_file
+
+            metadata as filenames
+             */
         async fn write(&self, idx: SectorIdx, sector: &(SectorVec, u64, u8)) {
             let sector_path = self.get_sector_dir(idx);
             let tmp_dir_per_sector_path = self.get_tmp_dir_for_sector(&sector_path);
@@ -306,8 +330,21 @@ pub mod sectors_manager_public {
             let mut tmp_file = File::create(tmp_file_path).await.unwrap();
 
             // write data with checksum to tmp in tmp dir
+            // fsync file
+            // fsync tmp dir
             tmp_file.write_all(&content_with_checksum).await.unwrap();
+            tmp_file.sync_data().await.unwrap();
+            self.sync_dir(&tmp_dir_per_sector_path).await;
 
+            // tmp file should be fully written at this moment
+            // even if the crash happens during writing of the dst file,
+            // the content of the most recent write might be recovered
+            // from tmp
+            self.remove_file(filepath, parent_dir_path).await;
+
+            // Write data without checksum to destination
+            let dst_path = self.get_dst_file_path(&sector_path, &metadata_filename);
+            let mut dst_file = File::create(dst_path).await;
 
             unimplemented!()
         }
