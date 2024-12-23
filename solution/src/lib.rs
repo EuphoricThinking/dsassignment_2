@@ -129,12 +129,15 @@ pub mod sectors_manager_public {
             return content;
         }
 
-        async fn get_dst_filename(&self, dir_iterator: &mut ReadDir) -> Option<PathBuf> {
-            while let Ok(entry) = dir_iterator.next_entry().await {
-                if let Some(dir_entry) = entry {
-                    let entry_path = dir_entry.path();
-                    if entry_path.is_file() {
-                        return Some(entry_path);
+        async fn get_current_dst_file_path(&self, dir_path: &PathBuf) -> Option<PathBuf> {
+            let entries_res = tokio::fs::read_dir(dir_path).await;
+            if let Ok(mut entry_reader) = entries_res {
+                while let Ok(entry) = entry_reader.next_entry().await {
+                    if let Some(dir_entry) = entry {
+                        let entry_path = dir_entry.path();
+                        if entry_path.is_file() {
+                            return Some(entry_path);
+                        }
                     }
                 }
             }
@@ -150,7 +153,7 @@ pub mod sectors_manager_public {
             return sector_path.join("tmp");
         }
 
-        fn get_dst_file_path(&self, sector_path: &PathBuf, metadata_filename: &String) -> PathBuf {
+        fn create_new_dst_file_path(&self, sector_path: &PathBuf, metadata_filename: &String) -> PathBuf {
             return sector_path.join(metadata_filename);
         }
 
@@ -241,19 +244,25 @@ pub mod sectors_manager_public {
             // if subdir does not exist - not written yet
             // let sector_path = self.root_dir.join(idx.to_string());
             let sector_path = self.get_sector_dir(idx);
+            let dst_file_path = self.get_current_dst_file_path(&sector_path).await;
+            match dst_file_path {
+                None => (0, 0),
+                Some(path) => return self.get_timestamp_write_rank_from_path(path),
+            }
+        }
 
-            let entries_res = tokio::fs::read_dir(sector_path).await;
+            // let entries_res = tokio::fs::read_dir(sector_path).await;
 
 
-            // TODO change to while loop?
-            match entries_res {
-                Err(_) => return (0, 0),
-                Ok(mut entry_reader) => {
-                    let dst_file = self.get_dst_filename(&mut entry_reader).await;
-                    match dst_file {
-                        None => return (0, 0),
-                        Some(dst_path) => return self.get_timestamp_write_rank_from_path(dst_path),
-                    }
+            // // TODO change to while loop?
+            // match entries_res {
+            //     Err(_) => return (0, 0),
+            //     Ok(mut entry_reader) => {
+            //         let dst_file = self.get_current_dst_file_path(&mut entry_reader).await;
+            //         match dst_file {
+            //             None => return (0, 0),
+            //             Some(dst_path) => return self.get_timestamp_write_rank_from_path(dst_path),
+            //         }
                     // let fst_entry = entry_reader.next_entry().await;
                     // match fst_entry {
                     //     Err(_) => return (0,0),
@@ -290,15 +299,12 @@ pub mod sectors_manager_public {
                     //         }
                     //     }
                     // }
-                }
-            }
 
 
 
             // After the recovery - there should be destination file and tmp directory
 
             // unimplemented!()
-        }
 
 
         /*
@@ -358,15 +364,26 @@ pub mod sectors_manager_public {
             // even if the crash happens during writing of the dst file,
             // the content of the most recent write might be recovered
             // from tmp
-            self.remove_file(filepath, parent_dir_path).await;
+            let old_dst_path = self.get_current_dst_file_path(&sector_path);
+
+            if let Some(old_path) = old_dst_path {
+                // If there have been dst file
+                /*
+                Structure:
+                /sector_dir
+                    - dst_file
+                 */
+                self.remove_file(&old_path, &sector_path);
+            }
 
             // Write data without checksum to destination
-            let dst_path = self.get_dst_file_path(&sector_path, &metadata_filename);
+            let dst_path = self.create_new_dst_file_path(&sector_path, &metadata_filename);
             let mut dst_file = File::create(dst_path).await;
+            dst_file.write_all(value).await.unwrap();
 
             unimplemented!()
         }
-    }
+    
 
     #[async_trait::async_trait]
     pub trait SectorsManager: Send + Sync {
