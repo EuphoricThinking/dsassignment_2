@@ -71,7 +71,7 @@ pub mod atomic_register_public {
 }
 
 pub mod sectors_manager_public {
-    use crate::{SectorIdx, SectorVec};
+    use crate::{SectorIdx, SectorVec, CONTENT_SIZE};
     use std::collections::HashSet;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
@@ -164,6 +164,12 @@ pub mod sectors_manager_public {
             // sync parent dir
             tokio::fs::File::open(&parent_dir_path).await.unwrap().sync_data().await.unwrap();
         }
+        
+        async fn write_to_file_sync_file_and_dir(&self, file: &mut File, parent_dir_path: &PathBuf, content: &Vec<u8> ) {
+            file.write_all(&content).await.unwrap();
+            file.sync_data().await.unwrap();
+            self.sync_dir(parent_dir_path).await;
+        }
 
         fn recovery(&self) {
             /*
@@ -246,7 +252,23 @@ pub mod sectors_manager_public {
     #[async_trait::async_trait]
     impl SectorsManager for ProcessSectorManager {
         async fn read_data(&self, idx: SectorIdx) -> SectorVec {
-            unimplemented!()
+            let sector_path = self.get_sector_dir(idx);
+            let dst_path = self.get_current_dst_file_path(&sector_path).await.unwrap();
+            let content_or_err = tokio::fs::read(dst_path).await;
+            match content_or_err {
+                Err(_) => {
+                    // File probably not found
+                    // file not written yet
+                    let empty_vec: Vec<u8> = vec![0; CONTENT_SIZE];
+
+                    return SectorVec(empty_vec);
+                }
+                Ok(content) => {
+                    return SectorVec(content);
+                }
+            }
+
+            // unimplemented!()
         }
 
         async fn read_metadata(&self, idx: SectorIdx) -> (u64, u8) {
@@ -324,9 +346,11 @@ pub mod sectors_manager_public {
             // write data with checksum to tmp in tmp dir
             // fsync file
             // fsync tmp dir
-            tmp_file.write_all(&content_with_checksum).await.unwrap();
-            tmp_file.sync_data().await.unwrap();
-            self.sync_dir(&tmp_dir_per_sector_path).await;
+            self.write_to_file_sync_file_and_dir(&mut tmp_file, &tmp_dir_per_sector_path, &content_with_checksum).await;
+
+            // tmp_file.write_all(&content_with_checksum).await.unwrap();
+            // tmp_file.sync_data().await.unwrap();
+            // self.sync_dir(&tmp_dir_per_sector_path).await;
 
             // tmp file should be fully written at this moment
             // even if the crash happens during writing of the dst file,
@@ -349,9 +373,11 @@ pub mod sectors_manager_public {
             // sync dst_dir (sector)
             let dst_path = self.create_new_dst_file_path(&sector_path, &metadata_filename);
             let mut dst_file = File::create(dst_path).await.unwrap();
-            dst_file.write_all(value).await.unwrap();
-            dst_file.sync_data().await.unwrap();
-            self.sync_dir(&sector_path).await;
+            self.write_to_file_sync_file_and_dir(&mut dst_file, &sector_path, value).await;
+
+            // dst_file.write_all(value).await.unwrap();
+            // dst_file.sync_data().await.unwrap();
+            // self.sync_dir(&sector_path).await;
 
             // remove tmp_file
             self.remove_file(&tmp_file_path, &tmp_dir_per_sector_path).await;
@@ -519,6 +545,7 @@ pub mod transfer_public {
         }
     }
 
+    // TODO use with capacity instead for optimisation
     pub async fn deserialize_register_command(
         data: &mut (dyn AsyncRead + Send + Unpin),
         hmac_system_key: &[u8; 64],
