@@ -158,11 +158,10 @@ pub mod sectors_manager_public {
         }
 
         async fn remove_file(&self, filepath: &PathBuf, parent_dir_path: &PathBuf) -> () {
-            // remove tmpfile
+            // remove file
             tokio::fs::remove_file(filepath).await.unwrap();
     
-    
-            // sync key_dir
+            // sync parent dir
             tokio::fs::File::open(&parent_dir_path).await.unwrap().sync_data().await.unwrap();
         }
 
@@ -300,7 +299,7 @@ pub mod sectors_manager_public {
             let metadata_filename = self.create_filename(timestamp, write_rank);
             // tmp file in tmp dir, with metadata as filename
             let tmp_file_path = self.get_tmp_path(&tmp_dir_per_sector_path, &metadata_filename);
-            let mut tmp_file = File::create(tmp_file_path).await.unwrap();
+            let mut tmp_file = File::create(&tmp_file_path).await.unwrap();
 
             // write data with checksum to tmp in tmp dir
             // fsync file
@@ -322,13 +321,20 @@ pub mod sectors_manager_public {
                 /sector_dir
                     - dst_file
                  */
-                self.remove_file(&old_path, &sector_path);
+                self.remove_file(&old_path, &sector_path).await;
             }
 
-            // Write data without checksum to destination
+            // Write data without checksum to the destination
+            // sync dst_file
+            // sync dst_dir (sector)
             let dst_path = self.create_new_dst_file_path(&sector_path, &metadata_filename);
             let mut dst_file = File::create(dst_path).await.unwrap();
             dst_file.write_all(value).await.unwrap();
+            dst_file.sync_data().await.unwrap();
+            self.sync_dir(&sector_path).await;
+
+            // remove tmp_file
+            self.remove_file(&tmp_file_path, &tmp_dir_per_sector_path).await;
 
             unimplemented!()
         }
