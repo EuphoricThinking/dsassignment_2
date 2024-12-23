@@ -102,16 +102,25 @@ pub mod sectors_manager_public {
             return self.root_dir.join(idx.to_string());
         }
 
-        fn get_tmp_path(&self, tmp_dir_path: &PathBuf, metadata_filename: &String) -> PathBuf {
+        fn create_tmp_path_name(&self, tmp_dir_path: &PathBuf, metadata_filename: &String) -> PathBuf {
             return tmp_dir_path.join(metadata_filename);
         }
 
-        fn sector_dir_exists(&self, dirname: &PathBuf) -> bool {
-            let checked = dirname.try_exists();
-            match checked {
+        // checking an error from create etc. won't work,
+        // since the file would be truncated if already existed
+        async fn sector_file_dir_exists(&self, dirname: &PathBuf) -> bool {
+            // let checked = dirname.try_exists();
+            // match checked {
+            //     Err(_) => false,
+            //     Ok(if_exists) => if_exists,
+            // }
+            let metadata = tokio::fs::metadata(dirname).await;
+
+            match metadata {
                 Err(_) => false,
-                Ok(if_exists) => if_exists,
+                Ok(_) => true,
             }
+
         }
 
         fn get_checksum(&self, value: &[u8]) -> Vec<u8> {
@@ -149,7 +158,7 @@ pub mod sectors_manager_public {
             tokio::fs::File::open(&self.root_dir).await.unwrap().sync_data().await.unwrap();
         }
 
-        fn get_tmp_dir_for_sector(&self, sector_path: &PathBuf) -> PathBuf {
+        fn create_tmp_dir_name_in_sector(&self, sector_path: &PathBuf) -> PathBuf {
             return sector_path.join("tmp");
         }
 
@@ -171,7 +180,7 @@ pub mod sectors_manager_public {
             self.sync_dir(parent_dir_path).await;
         }
 
-        fn recovery(&self) {
+        async fn recovery(&self) {
             /*
             iterate over sector_dirs
             if there is no tmp dir - add tmp dir
@@ -185,6 +194,49 @@ pub mod sectors_manager_public {
                         remove tmp
             
              */
+            let iterator_dir = tokio::fs::read_dir(&self.root_dir).await;
+            if let Ok(mut root_iterator)  = iterator_dir{
+                // iteratate over sectors
+                while let Ok(sector_dir) = root_iterator.next_entry().await {
+                    if let Some(sector_entry) = sector_dir {
+                        let sector_path = sector_entry.path();
+                        let tmp_dir_path = self.create_tmp_dir_name_in_sector(&sector_path);
+                    
+                        // if tmp directory does not exist: create one
+                        let tmp_dir_exists = self.sector_file_dir_exists(&tmp_dir_path).await;
+
+                        if !tmp_dir_exists {
+                            File::create(tmp_dir_path).await.unwrap();
+                            self.sync_dir(&sector_path).await;
+                            // there should be no other files and dirs to check
+                        }
+                        else {
+                            // there is tmp folder
+                            // check if there is a file
+                            let tmp_iter_res = tokio::fs::read_dir(tmp_dir_path).await;
+                            if let Ok(mut tmp_iterator) = tmp_iter_res {
+                                // there should be one tmp file
+                                if let Ok(tmp_file_result) = tmp_iterator.next_entry().await {
+                                    if let Some(tmp_file) = tmp_file_result {
+                                        // there is tmp file
+
+                                        // check if tmp is correct
+                                        // if correct:
+                                        // remove dst if exists, write dst, remove tmp
+                                        // else:
+                                        // remove tmp, proceed
+                                    }
+                                }
+                                // otherwise:
+                                // there might be dst file - should be correct
+
+                            }
+                        }
+                    }
+                    
+
+                }
+            }
             unimplemented!()
         }
         fn get_timestamp_write_rank_from_path(&self, path: PathBuf) -> (u64, u8) {
@@ -309,13 +361,13 @@ pub mod sectors_manager_public {
          */
         async fn write(&self, idx: SectorIdx, sector: &(SectorVec, u64, u8)) {
             let sector_path = self.get_sector_dir(idx);
-            let tmp_dir_per_sector_path = self.get_tmp_dir_for_sector(&sector_path);
+            let tmp_dir_per_sector_path = self.create_tmp_dir_name_in_sector(&sector_path);
 
             // if there is already a file
             // write first tmp
             // then remove dst
             // recovery - check if tmp exist
-            let sector_exists = self.sector_dir_exists(&sector_path);
+            let sector_exists = self.sector_file_dir_exists(&sector_path).await;
 
             // create a new subdir and fsync if does not exist
             if !sector_exists {
@@ -340,7 +392,7 @@ pub mod sectors_manager_public {
 
             let metadata_filename = self.create_filename(timestamp, write_rank);
             // tmp file in tmp dir, with metadata as filename
-            let tmp_file_path = self.get_tmp_path(&tmp_dir_per_sector_path, &metadata_filename);
+            let tmp_file_path = self.create_tmp_path_name(&tmp_dir_per_sector_path, &metadata_filename);
             let mut tmp_file = File::create(&tmp_file_path).await.unwrap();
 
             // write data with checksum to tmp in tmp dir
