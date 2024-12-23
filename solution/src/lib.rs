@@ -78,6 +78,7 @@ pub mod sectors_manager_public {
     use hmac::digest::generic_array::{ArrayLength, GenericArray};
     use sha2::{Sha256, Digest};
     use tokio::fs::{DirEntry, ReadDir, File};
+    use tokio::io::AsyncWriteExt;
     use tokio::sync::Mutex;
     use uuid::timestamp;
     use std::io::Error;
@@ -93,12 +94,16 @@ pub mod sectors_manager_public {
 
     impl ProcessSectorManager {
         // timestamp_writerank separated by "_"
-        fn create_filename(&self, timestamp: u64, write_rank: u8) -> String {
+        fn create_filename(&self, timestamp: &u64, write_rank: &u8) -> String {
             return timestamp.to_string() + "_" + &write_rank.to_string();
         }
 
         fn get_sector_dir(&self, idx: SectorIdx) -> PathBuf {
             return self.root_dir.join(idx.to_string());
+        }
+
+        fn get_tmp_path(&self, tmp_dir_path: &PathBuf, metadata_filename: &String) -> PathBuf {
+            return tmp_dir_path.join(metadata_filename);
         }
 
         fn sector_dir_exists(&self, dirname: &PathBuf) -> bool {
@@ -266,7 +271,7 @@ pub mod sectors_manager_public {
 
         async fn write(&self, idx: SectorIdx, sector: &(SectorVec, u64, u8)) {
             let sector_path = self.get_sector_dir(idx);
-            let tmp_sector_path = self.get_tmp_dir_for_sector(&sector_path);
+            let tmp_dir_per_sector_path = self.get_tmp_dir_for_sector(&sector_path);
 
             // if there is already a file
             // write first tmp
@@ -284,7 +289,7 @@ pub mod sectors_manager_public {
                 self.sync_dir(&self.root_dir).await;
 
                 // create tmp dir
-                File::create(tmp_sector_path).await.unwrap();
+                File::create(&tmp_dir_per_sector_path).await.unwrap();
                 // sync sector dir
                 self.sync_dir(&sector_path).await;
             }
@@ -294,6 +299,14 @@ pub mod sectors_manager_public {
             let (SectorVec(value), timestamp, write_rank) = sector;
             let checksum = self.get_checksum(&value);
             let content_with_checksum = self.get_file_content_with_checksum(value, checksum);
+
+            let metadata_filename = self.create_filename(timestamp, write_rank);
+            // tmp file in tmp dir, with metadata as filename
+            let tmp_file_path = self.get_tmp_path(&tmp_dir_per_sector_path, &metadata_filename);
+            let mut tmp_file = File::create(tmp_file_path).await.unwrap();
+
+            // write data with checksum to tmp in tmp dir
+            tmp_file.write_all(&content_with_checksum).await.unwrap();
 
 
             unimplemented!()
