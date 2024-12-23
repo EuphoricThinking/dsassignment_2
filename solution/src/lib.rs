@@ -165,6 +165,22 @@ pub mod sectors_manager_public {
             tokio::fs::File::open(&parent_dir_path).await.unwrap().sync_data().await.unwrap();
         }
 
+        fn recovery(&self) {
+            /*
+            iterate over sector_dirs
+            if there is no tmp dir - add tmp dir
+            - if there is tmp dir and tmp file ->
+                - check if tmp correct
+                    - correct:
+                        remove dst - if crash happens, we still have a correct tmp
+                        write new dst
+                        remove tmp
+                    - incorrect
+                        remove tmp
+            
+             */
+            unimplemented!()
+        }
         fn get_timestamp_write_rank_from_path(&self, path: PathBuf) -> (u64, u8) {
 
             
@@ -265,6 +281,10 @@ pub mod sectors_manager_public {
 
             metadata as filenames
              */
+
+        /*
+        After recovery ther should have been left in a sector: tmp dir, eventually dst file
+         */
         async fn write(&self, idx: SectorIdx, sector: &(SectorVec, u64, u8)) {
             let sector_path = self.get_sector_dir(idx);
             let tmp_dir_per_sector_path = self.get_tmp_dir_for_sector(&sector_path);
