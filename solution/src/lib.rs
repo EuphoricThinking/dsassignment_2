@@ -88,7 +88,7 @@ pub mod sectors_manager_public {
     struct ProcessSectorManager {
         root_dir: PathBuf,
         // RWLock to be implemented
-        written_sectors: Arc<Mutex<HashSet<u64>>>,
+        // written_sectors: Arc<Mutex<HashSet<u64>>>,
         hasher: Sha256,
     }
 
@@ -155,7 +155,7 @@ pub mod sectors_manager_public {
         }
 
         async fn sync_dir(&self, dirname: &PathBuf) -> () {
-            tokio::fs::File::open(&self.root_dir).await.unwrap().sync_data().await.unwrap();
+            tokio::fs::File::open(&dirname).await.unwrap().sync_data().await.unwrap();
         }
 
         fn create_tmp_dir_name_in_sector(&self, sector_path: &PathBuf) -> PathBuf {
@@ -226,11 +226,14 @@ pub mod sectors_manager_public {
                         remove tmp
             
              */
+            println!("here");
             let iterator_dir = tokio::fs::read_dir(&self.root_dir).await;
             if let Ok(mut root_iterator)  = iterator_dir{
                 // iteratate over sectors
-                while let Ok(sector_dir) = root_iterator.next_entry().await {
-                    if let Some(sector_entry) = sector_dir {
+                println!("iterator is ok");
+                while let Ok(Some(sector_entry)) = root_iterator.next_entry().await {
+                    // println!("root_iter {:?}", sector_dir);
+                    // if let Some(sector_entry) = sector_dir {
                         let sector_path = sector_entry.path();
                         let tmp_dir_path = self.create_tmp_dir_name_in_sector(&sector_path);
                     
@@ -238,7 +241,7 @@ pub mod sectors_manager_public {
                         let tmp_dir_exists = self.sector_file_dir_exists(&tmp_dir_path).await;
 
                         if !tmp_dir_exists {
-                            File::create(&tmp_dir_path).await.unwrap();
+                            tokio::fs::create_dir(&tmp_dir_path).await.unwrap();
                             self.sync_dir(&sector_path).await;
                             // there should be no other files and dirs to check
                         }
@@ -292,15 +295,18 @@ pub mod sectors_manager_public {
                                 // otherwise:
                                 // there might be dst file - should be correct
 
-                            }
+                            // }
                         }
                     }
                     
 
                 }
             }
-            unimplemented!()
+            // unimplemented!()
         }
+
+
+
         fn get_timestamp_write_rank_from_path(&self, path: PathBuf) -> (u64, u8) {
 
             
@@ -347,19 +353,19 @@ pub mod sectors_manager_public {
         //     }
         // }
 
-        async fn get_entry(&self, entry_reader: &mut ReadDir) -> Option<DirEntry> {
+        // async fn get_entry(&self, entry_reader: &mut ReadDir) -> Option<DirEntry> {
             
-                    let fst_entry = entry_reader.next_entry().await;
-                    match fst_entry {
-                        Err(_) => return None,
-                        Ok(None) => return None,
-                        Ok(Some(entry1)) => {
-                            return Some(entry1);
-                        }
+        //             let fst_entry = entry_reader.next_entry().await;
+        //             match fst_entry {
+        //                 Err(_) => return None,
+        //                 Ok(None) => return None,
+        //                 Ok(Some(entry1)) => {
+        //                     return Some(entry1);
+        //                 }
                     
-            }
-            // return None;
-        }
+        //     }
+        //     // return None;
+        // }
 
     }
 
@@ -435,13 +441,14 @@ pub mod sectors_manager_public {
             if !sector_exists {
                 // I am the only register responsible for the the sector creation,
                 // therefore I can create the dir and then fsync 
-                File::create(&sector_path).await.unwrap();
+                tokio::fs::create_dir(&sector_path).await.unwrap();
                 // sync root dir
                 // tokio::fs::File::open(&self.root_dir).await.unwrap().sync_data().await.unwrap();
                 self.sync_dir(&self.root_dir).await;
 
+                println!("sector: {:?}, tmp: {:?}", sector_path, tmp_dir_per_sector_path);
                 // create tmp dir
-                File::create(&tmp_dir_per_sector_path).await.unwrap();
+                tokio::fs::create_dir(&tmp_dir_per_sector_path).await.unwrap();
                 // sync sector dir
                 self.sync_dir(&sector_path).await;
             }
@@ -455,7 +462,7 @@ pub mod sectors_manager_public {
             let metadata_filename = self.create_filename(timestamp, write_rank);
             // tmp file in tmp dir, with metadata as filename
             let tmp_file_path = self.create_tmp_path_name(&tmp_dir_per_sector_path, &metadata_filename);
-            let mut tmp_file_res = File::create(&tmp_file_path).await;
+            let tmp_file_res = File::create(&tmp_file_path).await;
 
             // write data with checksum to tmp in tmp dir
             // fsync file
@@ -488,7 +495,7 @@ pub mod sectors_manager_public {
                 // sync dst_file
                 // sync dst_dir (sector)
                 let dst_path = self.create_new_dst_file_path(&sector_path, &metadata_filename);
-                let mut dst_file_res = File::create(dst_path).await;
+                let dst_file_res = File::create(dst_path).await;
                 if let Ok(mut dst_file) = dst_file_res {
                     self.write_to_file_sync_file_and_dir(&mut dst_file, &sector_path, value).await;
 
@@ -520,7 +527,16 @@ pub mod sectors_manager_public {
 
     /// Path parameter points to a directory to which this method has exclusive access.
     pub async fn build_sectors_manager(path: PathBuf) -> Arc<dyn SectorsManager> {
-        unimplemented!()
+        let sector_manager = ProcessSectorManager{
+            root_dir: path,
+            hasher: Sha256::new(),
+        };
+        println!("new");
+        sector_manager.recovery().await;
+        println!("recovered");
+
+        return Arc::new(sector_manager);
+        // unimplemented!()
     }
 }
 
