@@ -141,13 +141,13 @@ pub mod sectors_manager_public {
         async fn get_current_dst_file_path(&self, dir_path: &PathBuf) -> Option<PathBuf> {
             let entries_res = tokio::fs::read_dir(dir_path).await;
             if let Ok(mut entry_reader) = entries_res {
-                while let Ok(entry) = entry_reader.next_entry().await {
-                    if let Some(dir_entry) = entry {
+                while let Ok(Some(dir_entry)) = entry_reader.next_entry().await {
+                    // if let Some(dir_entry) = entry {
                         let entry_path = dir_entry.path();
                         if entry_path.is_file() {
                             return Some(entry_path);
                         }
-                    }
+                    // }
                 }
             }
 
