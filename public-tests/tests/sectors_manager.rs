@@ -8,16 +8,16 @@ use tempfile::tempdir;
 #[timeout(300)] // 300
 async fn drive_can_store_data() {
     // given
-    println!("given");
+    // println!("given");
     let root_drive_dir = tempdir().unwrap();
     let sectors_manager = build_sectors_manager(root_drive_dir.into_path()).await;
-    println!("nuilt");
+    // println!("nuilt");
 
     // when
     sectors_manager
         .write(0, &(SectorVec(vec![2; 4096]), 1, 1))
         .await;
-    println!("written");
+    // println!("written");
     let data = sectors_manager.read_data(0).await;
 
     // then

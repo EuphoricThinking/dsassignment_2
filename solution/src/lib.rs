@@ -226,11 +226,11 @@ pub mod sectors_manager_public {
                         remove tmp
             
              */
-            println!("here");
+            // println!("here");
             let iterator_dir = tokio::fs::read_dir(&self.root_dir).await;
             if let Ok(mut root_iterator)  = iterator_dir{
                 // iteratate over sectors
-                println!("iterator is ok");
+                // println!("iterator is ok");
                 while let Ok(Some(sector_entry)) = root_iterator.next_entry().await {
                     // println!("root_iter {:?}", sector_dir);
                     // if let Some(sector_entry) = sector_dir {
@@ -446,7 +446,7 @@ pub mod sectors_manager_public {
                 // tokio::fs::File::open(&self.root_dir).await.unwrap().sync_data().await.unwrap();
                 self.sync_dir(&self.root_dir).await;
 
-                println!("sector: {:?}, tmp: {:?}", sector_path, tmp_dir_per_sector_path);
+                // println!("sector: {:?}, tmp: {:?}", sector_path, tmp_dir_per_sector_path);
                 // create tmp dir
                 tokio::fs::create_dir(&tmp_dir_per_sector_path).await.unwrap();
                 // sync sector dir
@@ -531,9 +531,9 @@ pub mod sectors_manager_public {
             root_dir: path,
             hasher: Sha256::new(),
         };
-        println!("new");
+        // println!("new");
         sector_manager.recovery().await;
-        println!("recovered");
+        // println!("recovered");
 
         return Arc::new(sector_manager);
         // unimplemented!()
