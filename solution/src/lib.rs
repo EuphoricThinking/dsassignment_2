@@ -21,12 +21,44 @@ pub async fn run_register_process(config: Configuration) {
 
 pub mod atomic_register_public {
     use crate::{
-        ClientRegisterCommand, OperationSuccess, RegisterClient, SectorIdx, SectorsManager,
-        SystemRegisterCommand,
+        ClientRegisterCommand, OperationSuccess, RegisterClient, SectorIdx, SectorVec, SectorsManager, SystemRegisterCommand
     };
+    use std::collections::HashSet;
     use std::future::Future;
+    use std::iter::Scan;
     use std::pin::Pin;
     use std::sync::Arc;
+
+    struct RegisterPerSector {
+        callback: Option<Box<
+        dyn FnOnce(OperationSuccess) -> Pin<Box<dyn Future<Output = ()> + Send>>
+            + Send
+            + Sync,>>,
+        my_process_ident: u8,
+        my_sector_idx: SectorIdx,
+        register_client: Arc<dyn RegisterClient>,
+        sectors_manager: Arc<dyn SectorsManager>,
+        processes_count: u8,
+
+        // elements required by the algorithm
+        timestamp: u64,
+        writing_rank: u8,
+        value: SectorVec,
+        readlist: HashSet<u8>,
+        acklist: HashSet<u8>,
+        reading: bool,
+        writing: bool,
+        // value to be written
+        writeval: Option<SectorVec>,
+        // value read from the sector
+        readval: Option<SectorVec>,
+    }
+
+    impl RegisterPerSector {
+        async fn recovery(&mut self) {
+            unimplemented!()
+        }
+    }
 
     #[async_trait::async_trait]
     pub trait AtomicRegister: Send + Sync {
