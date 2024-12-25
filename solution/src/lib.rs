@@ -23,11 +23,17 @@ pub mod atomic_register_public {
     use crate::{
         ClientRegisterCommand, OperationSuccess, RegisterClient, SectorIdx, SectorVec, SectorsManager, SystemRegisterCommand
     };
-    use std::collections::HashSet;
+    use std::collections::{HashSet, HashMap};
     use std::future::Future;
-    use std::iter::Scan;
     use std::pin::Pin;
     use std::sync::Arc;
+
+    struct ReadTuple {
+        timestamp: u64,
+        write_rank: u8,
+        value: SectorVec,
+    }
+
 
     struct RegisterPerSector {
         callback: Option<Box<
@@ -44,7 +50,7 @@ pub mod atomic_register_public {
         timestamp: u64,
         writing_rank: u8,
         value: SectorVec,
-        readlist: HashSet<u8>,
+        readlist: HashMap<u8, ReadTuple>,
         acklist: HashSet<u8>,
         reading: bool,
         writing: bool,
