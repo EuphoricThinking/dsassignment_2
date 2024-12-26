@@ -267,7 +267,7 @@ pub mod atomic_register_public {
 
                                 let SectorData { timestamp: max_ts, write_rank: rr, value: read_value } = max_val;
 
-                                self.readval = Some(read_value);
+                                self.readval = Some(read_value.clone());
 
                                 if self.reading {
                                     self.broadcast_write_proc(max_ts, rr, read_value).await;
@@ -322,14 +322,22 @@ pub mod atomic_register_public {
                                     }
                                 }
                                 else {
-                                    
+                                    self.writing = false;
+                                    let request_result = OperationSuccess{
+                                        request_identifier: self.request_id,
+                                        op_return: crate::OperationReturn::Write,
+                                    };
+
+                                    if let Some(callback) = self.callback.take() {
+                                        callback(request_result);
+                                    }
                                 }
                             }
                         }
                     },
                 }
             }
-            unimplemented!()
+            // unimplemented!()
         }
 
 
