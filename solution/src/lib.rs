@@ -21,7 +21,7 @@ pub async fn run_register_process(config: Configuration) {
 
 pub mod atomic_register_public {
     use crate::{
-        Broadcast, ClientRegisterCommand, ClientRegisterCommandContent, OperationSuccess, RegisterClient, SectorIdx, SectorVec, SectorsManager, SystemCommandHeader, SystemRegisterCommand, SystemRegisterCommandContent, CONTENT_SIZE
+        Broadcast, ClientRegisterCommand, ClientRegisterCommandContent, OperationSuccess, ReadReturn, RegisterClient, SectorIdx, SectorVec, SectorsManager, SystemCommandHeader, SystemRegisterCommand, SystemRegisterCommandContent, CONTENT_SIZE
     };
     use crate::register_client_public::Send as RegisterSend;
     use std::collections::{HashSet, HashMap};
@@ -63,6 +63,7 @@ pub mod atomic_register_public {
         readval: Option<SectorVec>,
         operation_id: Uuid,
         write_phase: bool, 
+        request_id: u64,
 
         // last_issued_command: Option<SystemRegisterCommand>,
     }
@@ -193,11 +194,16 @@ pub mod atomic_register_public {
         ) {
             let ClientRegisterCommand{header, content} = cmd;
 
+            self.request_id = header.request_identifier;
+            self.operation_id = Uuid::new_v4();
+            self.acklist = HashSet::new();
+            self.readlist = HashMap::new();
+
             match content {
                 ClientRegisterCommandContent::Read => {
-                    self.operation_id = Uuid::new_v4();
-                    self.readlist = HashMap::new();
-                    self.acklist = HashSet::new();
+                    // self.operation_id = Uuid::new_v4();
+                    // self.readlist = HashMap::new();
+                    // self.acklist = HashSet::new();
                     self.reading = true;
 
                     // self.register_client.broadcast(msg)
@@ -205,10 +211,10 @@ pub mod atomic_register_public {
                     
                 },
                 ClientRegisterCommandContent::Write{data} => {
-                    self.operation_id = Uuid::new_v4();
+                    // self.operation_id = Uuid::new_v4();
                     self.writeval = Some(data);
-                    self.acklist = HashSet::new();
-                    self.readlist = HashMap::new();
+                    // self.acklist = HashSet::new();
+                    // self.readlist = HashMap::new();
                     self.writing = true;
 
                     self.send_broadcast_readproc_command().await;
@@ -261,6 +267,8 @@ pub mod atomic_register_public {
 
                                 let SectorData { timestamp: max_ts, write_rank: rr, value: read_value } = max_val;
 
+                                self.readval = Some(read_value);
+
                                 if self.reading {
                                     self.broadcast_write_proc(max_ts, rr, read_value).await;
                                 }
@@ -293,7 +301,31 @@ pub mod atomic_register_public {
                         self.register_client.send(msg).await;
                     },
                     SystemRegisterCommandContent::Ack => {
+                        if ((header.msg_ident) == self.operation_id) && self.write_phase {
+                            self.acklist.insert(self.my_process_ident);
+                            if self.is_quorum_and_reading_or_writing(self.acklist.len()){
+                                self.acklist = HashSet::new();
+                                self.write_phase = false;
+                                if self.reading {
+                                    self.reading = false;
+                                    let read_return = ReadReturn{
+                                        read_data: self.unpack_readval_writeval(&self.readval),
+                                    };
 
+                                    let request_result = OperationSuccess{
+                                        request_identifier: self.request_id,
+                                        op_return: crate::OperationReturn::Read(read_return),
+                                        };
+
+                                    if let Some(callback) = self.callback.take() {
+                                        callback(request_result);
+                                    }
+                                }
+                                else {
+                                    
+                                }
+                            }
+                        }
                     },
                 }
             }
@@ -361,7 +393,7 @@ pub mod atomic_register_public {
             readval: None,
             operation_id: Uuid::nil(),
             write_phase: false,
-
+            request_id: 0,
             // last_issued_command: None,
         };
 
