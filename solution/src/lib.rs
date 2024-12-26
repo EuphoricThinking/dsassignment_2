@@ -188,6 +188,10 @@ pub mod atomic_register_public {
                     SystemRegisterCommandContent::Value { timestamp, write_rank, sector_data } => {
                         if (header.msg_ident == self.operation_id) && !self.write_phase {
                             self.readlist.insert(header.process_identifier, SectorData { timestamp, write_rank, value: sector_data});
+
+                            if (self.readlist.len() > (self.processes_count / 2).into()) && (self.reading || self.writing) {
+                                
+                            }
                         }
 
                     },
