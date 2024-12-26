@@ -30,6 +30,7 @@ pub mod atomic_register_public {
     use std::sync::Arc;
     use uuid::Uuid;
 
+    #[derive(Clone)]
     struct SectorData {
         timestamp: u64,
         write_rank: u8,
@@ -105,7 +106,7 @@ pub mod atomic_register_public {
             self.register_client.broadcast(msg).await;
         }
 
-        async fn get_value(&mut self) -> SectorVec {
+        async fn get_value(&self) -> SectorVec {
             match &self.value {
                 None => {
                     // there should have been value after recovery
@@ -115,6 +116,15 @@ pub mod atomic_register_public {
             }
         }
 
+        fn get_max_value_readlist(&self) -> SectorData {
+            let (_, val) = self.readlist.iter().max_by(|(_, v1), (_, v2)| {
+                v1.timestamp.cmp(&v2.timestamp).then(v1.write_rank.cmp(&v2.write_rank))
+            }).unwrap();
+
+            return val.clone();
+
+            // unimplemented!()
+        }
     }
     
     #[async_trait::async_trait]
@@ -190,9 +200,10 @@ pub mod atomic_register_public {
                             self.readlist.insert(header.process_identifier, SectorData { timestamp, write_rank, value: sector_data});
 
                             if (self.readlist.len() > (self.processes_count / 2).into()) && (self.reading || self.writing) {
-                                
-                            }
+                                self.readlist.insert(self.my_process_ident, SectorData { timestamp: self.timestamp, write_rank: self.writing_rank, value: self.get_value().await });
+                                let max_val = self.get_max_value_readlist();
                         }
+                    }
 
                     },
                     SystemRegisterCommandContent::WriteProc { timestamp, write_rank, data_to_write } => {
