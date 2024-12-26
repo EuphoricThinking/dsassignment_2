@@ -23,6 +23,7 @@ pub mod atomic_register_public {
     use crate::{
         Broadcast, ClientRegisterCommand, ClientRegisterCommandContent, OperationSuccess, RegisterClient, SectorIdx, SectorVec, SectorsManager, SystemCommandHeader, SystemRegisterCommand, SystemRegisterCommandContent
     };
+    use crate::register_client_public::Send as RegisterSend;
     use std::collections::{HashSet, HashMap};
     use std::future::Future;
     use std::pin::Pin;
@@ -60,6 +61,7 @@ pub mod atomic_register_public {
         // value read from the sector
         readval: Option<SectorVec>,
         operation_id: Uuid,
+        write_phase: bool, 
 
         // last_issued_command: Option<SystemRegisterCommand>,
     }
@@ -84,7 +86,7 @@ pub mod atomic_register_public {
         }
 
         async fn send_broadcast_readproc_command(&mut self) {
-        let command_content = SystemRegisterCommandContent::ReadProc;
+            let command_content = SystemRegisterCommandContent::ReadProc;
             let command_header = SystemCommandHeader{
                 process_identifier: self.my_process_ident,
                 msg_ident: self.operation_id,
@@ -102,6 +104,17 @@ pub mod atomic_register_public {
 
             self.register_client.broadcast(msg).await;
         }
+
+        async fn get_value(&mut self) -> SectorVec {
+            match &self.value {
+                None => {
+                    // there should have been value after recovery
+                    return self.sectors_manager.read_data(self.sector_idx).await;
+                },
+                Some(val) => {return val.clone();},
+            }
+        }
+
     }
     
     #[async_trait::async_trait]
@@ -142,6 +155,50 @@ pub mod atomic_register_public {
         }
 
         async fn system_command(&mut self, cmd: SystemRegisterCommand) {
+            let SystemRegisterCommand{header, content} = cmd;
+
+            let SystemCommandHeader{process_identifier, msg_ident, sector_idx} = header;
+
+            let receiver_id = process_identifier;
+
+            if header.sector_idx == self.sector_idx {
+
+                match content {
+                    SystemRegisterCommandContent::ReadProc => {
+                        let reply_content = SystemRegisterCommandContent::Value { timestamp: self.timestamp, write_rank: self.writing_rank, sector_data: self.get_value().await };
+
+                        let reply_header = SystemCommandHeader{
+                            process_identifier: self.my_process_ident,
+                            msg_ident: header.msg_ident,
+                            sector_idx: self.sector_idx,
+                        };
+
+                        let reply = SystemRegisterCommand{
+                            header: reply_header, //header,
+                            content: reply_content,
+                        };
+
+                        let msg = RegisterSend {
+                            cmd: Arc::new(reply),
+                            target: receiver_id,
+                        };
+
+                        self.register_client.send(msg).await;
+                    },
+                    SystemRegisterCommandContent::Value { timestamp, write_rank, sector_data } => {
+                        if (header.msg_ident == self.operation_id) && !self.write_phase {
+                            self.readlist.insert(header.process_identifier, SectorData { timestamp, write_rank, value: sector_data});
+                        }
+
+                    },
+                    SystemRegisterCommandContent::WriteProc { timestamp, write_rank, data_to_write } => {
+
+                    },
+                    SystemRegisterCommandContent::Ack => {
+
+                    },
+                }
+            }
             unimplemented!()
         }
 
@@ -205,6 +262,7 @@ pub mod atomic_register_public {
             writeval: None,
             readval: None,
             operation_id: Uuid::nil(),
+            write_phase: false,
 
             // last_issued_command: None,
         };
