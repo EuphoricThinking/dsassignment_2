@@ -118,7 +118,7 @@ pub mod atomic_register_public {
             self.sectors_manager.write(self.sector_idx, &(value, timestamp, write_rank)).await;
         }
 
-        async fn save_and_store(&mut self, timestamp: u64, write_rank: u8, value: &SectorVec) {
+        async fn store_and_save(&mut self, timestamp: u64, write_rank: u8, value: &SectorVec) {
             self.store(timestamp, write_rank, value.clone()).await;
 
             self.timestamp = timestamp;
@@ -143,6 +143,10 @@ pub mod atomic_register_public {
             self.register_client.broadcast(msg).await;
             // TODO implement store
             // let reply_content
+        }
+
+        fn is_quorum_and_reading_or_writing(&self, container_len: usize) -> bool {
+            (self.readlist.len() > (self.processes_count / 2).into()) && (self.reading || self.writing)
         }
 
         async fn get_value(&self) -> SectorVec {
@@ -216,9 +220,9 @@ pub mod atomic_register_public {
         async fn system_command(&mut self, cmd: SystemRegisterCommand) {
             let SystemRegisterCommand{header, content} = cmd;
 
-            let SystemCommandHeader{process_identifier, msg_ident, sector_idx} = header;
+            // let SystemCommandHeader{process_identifier, msg_ident, sector_idx} = header;
 
-            let receiver_id = process_identifier;
+            // let receiver_id = process_identifier;
 
             if header.sector_idx == self.sector_idx {
 
@@ -239,7 +243,7 @@ pub mod atomic_register_public {
 
                         let msg = RegisterSend {
                             cmd: Arc::new(reply),
-                            target: receiver_id,
+                            target: header.process_identifier,
                         };
 
                         self.register_client.send(msg).await;
@@ -248,7 +252,7 @@ pub mod atomic_register_public {
                         if (header.msg_ident == self.operation_id) && !self.write_phase {
                             self.readlist.insert(header.process_identifier, SectorData { timestamp, write_rank, value: sector_data});
 
-                            if (self.readlist.len() > (self.processes_count / 2).into()) && (self.reading || self.writing) {
+                            if self.is_quorum_and_reading_or_writing(self.readlist.len()) {
                                 self.readlist.insert(self.my_process_ident, SectorData { timestamp: self.timestamp, write_rank: self.writing_rank, value: self.get_value().await });
                                 let max_val = self.get_max_value_readlist();
                                 self.readlist = HashMap::new();
@@ -263,7 +267,7 @@ pub mod atomic_register_public {
                                 else {
                                     let new_val = self.unpack_readval_writeval(&self.writeval);
                                     let (new_ts, new_wr) = (max_ts + 1, self.my_process_ident);
-                                    self.save_and_store(new_ts, new_wr, &new_val).await;
+                                    self.store_and_save(new_ts, new_wr, &new_val).await;
 
                                     self.broadcast_write_proc(new_ts, new_wr, new_val).await;
                                 }
@@ -272,7 +276,21 @@ pub mod atomic_register_public {
 
                     },
                     SystemRegisterCommandContent::WriteProc { timestamp, write_rank, data_to_write } => {
+                        if (self.timestamp, self.writing_rank) > (timestamp, write_rank) {
+                            self.store_and_save(timestamp, write_rank, &data_to_write).await;
+                        }
 
+                        let reply_command = SystemRegisterCommand{
+                            header: self.get_command_header(),
+                            content: SystemRegisterCommandContent::Ack,
+                        };
+
+                        let msg = RegisterSend{
+                            cmd: Arc::new(reply_command),
+                            target: header.process_identifier,
+                        };
+
+                        self.register_client.send(msg).await;
                     },
                     SystemRegisterCommandContent::Ack => {
 
