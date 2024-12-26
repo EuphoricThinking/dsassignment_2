@@ -21,14 +21,14 @@ pub async fn run_register_process(config: Configuration) {
 
 pub mod atomic_register_public {
     use crate::{
-        ClientRegisterCommand, OperationSuccess, RegisterClient, SectorIdx, SectorVec, SectorsManager, SystemRegisterCommand
+        ClientRegisterCommand, ClientRegisterCommandContent, OperationSuccess, RegisterClient, SectorIdx, SectorVec, SectorsManager, SystemRegisterCommand
     };
     use std::collections::{HashSet, HashMap};
     use std::future::Future;
     use std::pin::Pin;
     use std::sync::Arc;
 
-    struct ReadTuple {
+    struct SectorData {
         timestamp: u64,
         write_rank: u8,
         value: SectorVec,
@@ -41,7 +41,7 @@ pub mod atomic_register_public {
             + Send
             + Sync,>>,
         my_process_ident: u8,
-        my_sector_idx: SectorIdx,
+        sector_idx: SectorIdx,
         register_client: Arc<dyn RegisterClient>,
         sectors_manager: Arc<dyn SectorsManager>,
         processes_count: u8,
@@ -49,8 +49,8 @@ pub mod atomic_register_public {
         // elements required by the algorithm
         timestamp: u64,
         writing_rank: u8,
-        value: SectorVec,
-        readlist: HashMap<u8, ReadTuple>,
+        value: Option<SectorVec>,
+        readlist: HashMap<u8, SectorData>,
         acklist: HashSet<u8>,
         reading: bool,
         writing: bool,
@@ -61,8 +61,22 @@ pub mod atomic_register_public {
     }
 
     impl RegisterPerSector {
+        async fn retrieve(&mut self) -> SectorData {
+            let (timestamp, write_rank) = self.sectors_manager.read_metadata(self.sector_idx).await;
+            let value = self.sectors_manager.read_data(self.sector_idx).await;
+
+            SectorData{timestamp, write_rank, value}
+            // unimplemented!()
+        }
+
         async fn recovery(&mut self) {
-            unimplemented!()
+            let SectorData{timestamp, write_rank, value} = self.retrieve().await;
+
+            self.timestamp = timestamp;
+            self.writing_rank = write_rank;
+            self.value = Some(value);
+
+            // unimplemented!()
         }
     }
     
@@ -77,6 +91,16 @@ pub mod atomic_register_public {
                     + Sync,
             >,
         ) {
+            let ClientRegisterCommand{header, content} = cmd;
+
+            match content {
+                ClientRegisterCommandContent::Read => {
+
+                },
+                ClientRegisterCommandContent::Write{data} => {
+
+                }
+            }
             unimplemented!()
         }
 
@@ -124,7 +148,31 @@ pub mod atomic_register_public {
         sectors_manager: Arc<dyn SectorsManager>,
         processes_count: u8,
     ) -> Box<dyn AtomicRegister> {
-        unimplemented!()
+
+        let mut new_register = RegisterPerSector {
+            callback: None,
+
+            my_process_ident: self_ident,
+            sector_idx: sector_idx,
+            register_client: register_client,
+            sectors_manager: sectors_manager,
+            processes_count: processes_count,
+
+            timestamp: 0,
+            writing_rank: 0,
+            value: None,
+            readlist: HashMap::new(),
+            acklist: HashSet::new(),
+            reading: false,
+            writing: false,
+            writeval: None,
+            readval: None,
+        };
+
+        new_register.recovery().await;
+
+        return Box::new(new_register);
+        // unimplemented!()
     }
 }
 
