@@ -21,12 +21,13 @@ pub async fn run_register_process(config: Configuration) {
 
 pub mod atomic_register_public {
     use crate::{
-        ClientRegisterCommand, ClientRegisterCommandContent, OperationSuccess, RegisterClient, SectorIdx, SectorVec, SectorsManager, SystemRegisterCommand
+        Broadcast, ClientRegisterCommand, ClientRegisterCommandContent, OperationSuccess, RegisterClient, SectorIdx, SectorVec, SectorsManager, SystemCommandHeader, SystemRegisterCommand, SystemRegisterCommandContent
     };
     use std::collections::{HashSet, HashMap};
     use std::future::Future;
     use std::pin::Pin;
     use std::sync::Arc;
+    use uuid::Uuid;
 
     struct SectorData {
         timestamp: u64,
@@ -58,6 +59,9 @@ pub mod atomic_register_public {
         writeval: Option<SectorVec>,
         // value read from the sector
         readval: Option<SectorVec>,
+        operation_id: Uuid,
+
+        // last_issued_command: Option<SystemRegisterCommand>,
     }
 
     impl RegisterPerSector {
@@ -95,6 +99,29 @@ pub mod atomic_register_public {
 
             match content {
                 ClientRegisterCommandContent::Read => {
+                    self.operation_id = Uuid::new_v4();
+                    self.readlist = HashMap::new();
+                    self.acklist = HashSet::new();
+                    self.reading = true;
+
+                    // self.register_client.broadcast(msg)
+                    let command_content = SystemRegisterCommandContent::ReadProc;
+                    let command_header = SystemCommandHeader{
+                        process_identifier: self.my_process_ident,
+                        msg_ident: self.operation_id,
+                        sector_idx: self.sector_idx,
+                    };
+
+                    let system_command = SystemRegisterCommand{
+                        header: command_header,
+                        content: command_content,
+                    };
+
+                    let msg = Broadcast{
+                        cmd: Arc::new(system_command)
+                    };
+
+                    self.register_client.broadcast(msg).await;
 
                 },
                 ClientRegisterCommandContent::Write{data} => {
@@ -167,6 +194,9 @@ pub mod atomic_register_public {
             writing: false,
             writeval: None,
             readval: None,
+            operation_id: Uuid::nil(),
+
+            // last_issued_command: None,
         };
 
         new_register.recovery().await;
