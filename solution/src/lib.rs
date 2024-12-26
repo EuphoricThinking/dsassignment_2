@@ -106,6 +106,20 @@ pub mod atomic_register_public {
             self.register_client.broadcast(msg).await;
         }
 
+        fn get_command_header(&self) -> SystemCommandHeader {
+            SystemCommandHeader{
+                process_identifier: self.my_process_ident,
+                msg_ident: self.operation_id,
+                sector_idx: self.sector_idx,
+            }
+        }
+        async fn broadcast_write_proc(&mut self){
+            let reply_header = self.get_command_header();
+
+            // TODO implement store
+            // let reply_content
+        }
+
         async fn get_value(&self) -> SectorVec {
             match &self.value {
                 None => {
@@ -202,6 +216,15 @@ pub mod atomic_register_public {
                             if (self.readlist.len() > (self.processes_count / 2).into()) && (self.reading || self.writing) {
                                 self.readlist.insert(self.my_process_ident, SectorData { timestamp: self.timestamp, write_rank: self.writing_rank, value: self.get_value().await });
                                 let max_val = self.get_max_value_readlist();
+                                self.readlist = HashMap::new();
+                                self.acklist = HashSet::new();
+                                self.write_phase = true;
+
+                                let SectorData { timestamp: max_ts, write_rank: rr, value: max_value } = max_val;
+
+                                if self.reading {
+                                    let broadcast_header
+                                }
                         }
                     }
 
