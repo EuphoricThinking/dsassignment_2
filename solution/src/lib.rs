@@ -21,7 +21,7 @@ pub async fn run_register_process(config: Configuration) {
 
 pub mod atomic_register_public {
     use crate::{
-        Broadcast, ClientRegisterCommand, ClientRegisterCommandContent, OperationSuccess, RegisterClient, SectorIdx, SectorVec, SectorsManager, SystemCommandHeader, SystemRegisterCommand, SystemRegisterCommandContent
+        Broadcast, ClientRegisterCommand, ClientRegisterCommandContent, OperationSuccess, RegisterClient, SectorIdx, SectorVec, SectorsManager, SystemCommandHeader, SystemRegisterCommand, SystemRegisterCommandContent, CONTENT_SIZE
     };
     use crate::register_client_public::Send as RegisterSend;
     use std::collections::{HashSet, HashMap};
@@ -113,9 +113,34 @@ pub mod atomic_register_public {
                 sector_idx: self.sector_idx,
             }
         }
-        async fn broadcast_write_proc(&mut self){
+
+        async fn store(&mut self, timestamp: u64, write_rank: u8, value: SectorVec) {
+            self.sectors_manager.write(self.sector_idx, &(value, timestamp, write_rank)).await;
+        }
+
+        async fn save_and_store(&mut self, timestamp: u64, write_rank: u8, value: &SectorVec) {
+            self.store(timestamp, write_rank, value.clone()).await;
+
+            self.timestamp = timestamp;
+            self.writing_rank = write_rank;
+            self.value = Some(value.clone());
+        }
+
+        async fn broadcast_write_proc(&mut self, timestamp: u64, write_rank: u8, value: SectorVec ){
             let reply_header = self.get_command_header();
 
+            let reply_content = SystemRegisterCommandContent::WriteProc { timestamp: timestamp, write_rank: write_rank, data_to_write: value };
+
+            let reply_command = SystemRegisterCommand{
+                header: reply_header,
+                content: reply_content,
+            };
+
+            let msg = Broadcast{
+                cmd: Arc::new(reply_command),
+            };
+
+            self.register_client.broadcast(msg).await;
             // TODO implement store
             // let reply_content
         }
@@ -126,6 +151,16 @@ pub mod atomic_register_public {
                     // there should have been value after recovery
                     return self.sectors_manager.read_data(self.sector_idx).await;
                 },
+                Some(val) => {return val.clone();},
+            }
+        }
+
+        fn unpack_readval_writeval(&self, value: &Option<SectorVec>) -> SectorVec {
+            match value {
+                None => {
+                    let new_vector: Vec<u8> = vec![0; CONTENT_SIZE];
+                    return SectorVec(new_vector);
+                }
                 Some(val) => {return val.clone();},
             }
         }
@@ -220,10 +255,17 @@ pub mod atomic_register_public {
                                 self.acklist = HashSet::new();
                                 self.write_phase = true;
 
-                                let SectorData { timestamp: max_ts, write_rank: rr, value: max_value } = max_val;
+                                let SectorData { timestamp: max_ts, write_rank: rr, value: read_value } = max_val;
 
                                 if self.reading {
-                                    let broadcast_header
+                                    self.broadcast_write_proc(max_ts, rr, read_value).await;
+                                }
+                                else {
+                                    let new_val = self.unpack_readval_writeval(&self.writeval);
+                                    let (new_ts, new_wr) = (max_ts + 1, self.my_process_ident);
+                                    self.save_and_store(new_ts, new_wr, &new_val).await;
+
+                                    self.broadcast_write_proc(new_ts, new_wr, new_val).await;
                                 }
                         }
                     }
