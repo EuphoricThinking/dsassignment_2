@@ -65,7 +65,27 @@ pub mod atomic_register_public {
             unimplemented!()
         }
     }
+    
+    #[async_trait::async_trait]
+    impl AtomicRegister for RegisterPerSector {
+        async fn client_command(
+            &mut self,
+            cmd: ClientRegisterCommand,
+            success_callback: Box<
+                dyn FnOnce(OperationSuccess) -> Pin<Box<dyn Future<Output = ()> + Send>>
+                    + Send
+                    + Sync,
+            >,
+        ) {
+            unimplemented!()
+        }
 
+        async fn system_command(&mut self, cmd: SystemRegisterCommand) {
+            unimplemented!()
+        }
+
+
+    }
     #[async_trait::async_trait]
     pub trait AtomicRegister: Send + Sync {
         /// Handle a client command. After the command is completed, we expect
