@@ -82,6 +82,26 @@ pub mod atomic_register_public {
 
             // unimplemented!()
         }
+
+        async fn send_broadcast_readproc_command(&mut self) {
+        let command_content = SystemRegisterCommandContent::ReadProc;
+            let command_header = SystemCommandHeader{
+                process_identifier: self.my_process_ident,
+                msg_ident: self.operation_id,
+                sector_idx: self.sector_idx,
+            };
+
+            let system_command = SystemRegisterCommand{
+                header: command_header,
+                content: command_content,
+            };
+
+            let msg = Broadcast{
+                cmd: Arc::new(system_command)
+            };
+
+            self.register_client.broadcast(msg).await;
+        }
     }
     
     #[async_trait::async_trait]
@@ -105,30 +125,20 @@ pub mod atomic_register_public {
                     self.reading = true;
 
                     // self.register_client.broadcast(msg)
-                    let command_content = SystemRegisterCommandContent::ReadProc;
-                    let command_header = SystemCommandHeader{
-                        process_identifier: self.my_process_ident,
-                        msg_ident: self.operation_id,
-                        sector_idx: self.sector_idx,
-                    };
-
-                    let system_command = SystemRegisterCommand{
-                        header: command_header,
-                        content: command_content,
-                    };
-
-                    let msg = Broadcast{
-                        cmd: Arc::new(system_command)
-                    };
-
-                    self.register_client.broadcast(msg).await;
-
+                    self.send_broadcast_readproc_command().await;
+                    
                 },
                 ClientRegisterCommandContent::Write{data} => {
+                    self.operation_id = Uuid::new_v4();
+                    self.writeval = Some(data);
+                    self.acklist = HashSet::new();
+                    self.readlist = HashMap::new();
+                    self.writing = true;
 
+                    self.send_broadcast_readproc_command().await;
                 }
             }
-            unimplemented!()
+            // unimplemented!()
         }
 
         async fn system_command(&mut self, cmd: SystemRegisterCommand) {
