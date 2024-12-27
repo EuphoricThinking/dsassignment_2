@@ -45,7 +45,7 @@ async fn read_triggers_broadcast() {
 }
 
 #[tokio::test]
-#[timeout(2000)]
+#[timeout(2000)] // 2000
 async fn majority_completes_operations_after_crash() {
     // given
     let (tx_client, rx_client) = unbounded();
