@@ -147,7 +147,7 @@ pub mod atomic_register_public {
         }
 
         fn is_quorum_and_reading_or_writing(&self, container_len: usize) -> bool {
-            (self.readlist.len() > (self.processes_count / 2).into()) && (self.reading || self.writing)
+            (container_len > (self.processes_count / 2).into()) && (self.reading || self.writing)
         }
 
         async fn get_value(&self) -> SectorVec {
@@ -193,6 +193,8 @@ pub mod atomic_register_public {
             >,
         ) {
             let ClientRegisterCommand{header, content} = cmd;
+
+            self.callback = Some(success_callback);
 
             self.request_id = header.request_identifier;
             self.operation_id = Uuid::new_v4();
@@ -318,7 +320,7 @@ pub mod atomic_register_public {
                                         };
 
                                     if let Some(callback) = self.callback.take() {
-                                        callback(request_result);
+                                        callback(request_result).await;
                                     }
                                 }
                                 else {
@@ -329,7 +331,7 @@ pub mod atomic_register_public {
                                     };
 
                                     if let Some(callback) = self.callback.take() {
-                                        callback(request_result);
+                                        callback(request_result).await;
                                     }
                                 }
                             }
@@ -680,6 +682,12 @@ pub mod sectors_manager_public {
                     (0, 0)
                     // (timestamp, write_rank)
                 }
+
+            fn get_empty_zeroed_vec(&self) -> SectorVec {
+                let empty_vec: Vec<u8> = vec![0; CONTENT_SIZE];
+
+                return SectorVec(empty_vec);
+            }
             
             // let split_pair: Vec<&str> = filename.split("_").collect();
             // let timestamp: u64 = split_pair[0].parse().unwrap();
@@ -715,18 +723,24 @@ pub mod sectors_manager_public {
     impl SectorsManager for ProcessSectorManager {
         async fn read_data(&self, idx: SectorIdx) -> SectorVec {
             let sector_path = self.get_sector_dir(idx);
-            let dst_path = self.get_current_dst_file_path(&sector_path).await.unwrap();
-            let content_or_err = tokio::fs::read(dst_path).await;
-            match content_or_err {
-                Err(_) => {
-                    // File probably not found
-                    // file not written yet
-                    let empty_vec: Vec<u8> = vec![0; CONTENT_SIZE];
+            let dst_path_res = self.get_current_dst_file_path(&sector_path).await;
+            match dst_path_res {
+                None => return self.get_empty_zeroed_vec(),
+                Some(dst_path) => {
+                    let content_or_err = tokio::fs::read(dst_path).await;
+                    match content_or_err {
+                        Err(_) => {
+                            // File probably not found
+                            // file not written yet
+                            // let empty_vec: Vec<u8> = vec![0; CONTENT_SIZE];
 
-                    return SectorVec(empty_vec);
-                }
-                Ok(content) => {
-                    return SectorVec(content);
+                            // return SectorVec(empty_vec);
+                            return self.get_empty_zeroed_vec();
+                        }
+                        Ok(content) => {
+                            return SectorVec(content);
+                        }
+                    }
                 }
             }
 
