@@ -259,10 +259,8 @@ pub mod atomic_register_public {
                     SystemRegisterCommandContent::Value { timestamp, write_rank, sector_data } => {
                         if (header.msg_ident == self.operation_id) && !self.write_phase {
                             self.readlist.insert(header.process_identifier, SectorData { timestamp, write_rank, value: sector_data});
-                            println!("enter value");
 
                             if self.is_quorum_and_reading_or_writing(self.readlist.len()) {
-                                println!("found value quorum");
                                 self.readlist.insert(self.my_process_ident, SectorData { timestamp: self.timestamp, write_rank: self.writing_rank, value: self.get_value().await });
                                 let max_val = self.get_max_value_readlist();
                                 self.readlist = HashMap::new();
@@ -292,7 +290,6 @@ pub mod atomic_register_public {
                             self.store_and_save(timestamp, write_rank, &data_to_write).await;
                         }
 
-                        println!("doing writeproc");
                         let reply_command = SystemRegisterCommand{
                             header: self.get_command_header(header.msg_ident),
                             content: SystemRegisterCommandContent::Ack,
@@ -306,14 +303,10 @@ pub mod atomic_register_public {
                         self.register_client.send(msg).await;
                     },
                     SystemRegisterCommandContent::Ack => {
-                        println!("got ack: header {} mine {} | writephase {}", header.msg_ident, self.operation_id, self.write_phase);
                         if ((header.msg_ident) == self.operation_id) && self.write_phase {
-                            println!("thi is this msg in ack");
                             // self.acklist.insert(self.my_process_ident);
                             self.acklist.insert(header.process_identifier);
-                            println!("ack len: {} division: {}, readwrite: {}", self.acklist.len(), usize::from(self.processes_count / 2), self.reading || self.writing);
                             if self.is_quorum_and_reading_or_writing(self.acklist.len()){
-                                println!("found quorum in ack");
                                 self.acklist = HashSet::new();
                                 self.write_phase = false;
                                 if self.reading {
@@ -578,13 +571,10 @@ pub mod sectors_manager_public {
                         remove tmp
             
              */
-            // println!("here");
             let iterator_dir = tokio::fs::read_dir(&self.root_dir).await;
             if let Ok(mut root_iterator)  = iterator_dir{
                 // iteratate over sectors
-                // println!("iterator is ok");
                 while let Ok(Some(sector_entry)) = root_iterator.next_entry().await {
-                    // println!("root_iter {:?}", sector_dir);
                     // if let Some(sector_entry) = sector_dir {
                         let sector_path = sector_entry.path();
                         let tmp_dir_path = self.create_tmp_dir_name_in_sector(&sector_path);
@@ -810,7 +800,6 @@ pub mod sectors_manager_public {
                 // tokio::fs::File::open(&self.root_dir).await.unwrap().sync_data().await.unwrap();
                 self.sync_dir(&self.root_dir).await;
 
-                // println!("sector: {:?}, tmp: {:?}", sector_path, tmp_dir_per_sector_path);
                 // create tmp dir
                 tokio::fs::create_dir(&tmp_dir_per_sector_path).await.unwrap();
                 // sync sector dir
@@ -895,9 +884,7 @@ pub mod sectors_manager_public {
             root_dir: path,
             hasher: Sha256::new(),
         };
-        // println!("new");
         sector_manager.recovery().await;
-        // println!("recovered");
 
         return Arc::new(sector_manager);
         // unimplemented!()
