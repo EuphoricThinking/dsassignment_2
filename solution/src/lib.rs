@@ -417,7 +417,7 @@ pub mod atomic_register_public {
 
 pub mod sectors_manager_public {
     use crate::{SectorIdx, SectorVec, CONTENT_SIZE};
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
     use hmac::digest::generic_array::{ArrayLength, GenericArray};
@@ -435,6 +435,7 @@ pub mod sectors_manager_public {
         // RWLock to be implemented
         // written_sectors: Arc<Mutex<HashSet<u64>>>,
         hasher: Sha256,
+        sectors_written_after_recovery: HashSet<u64>,
     }
 
     impl ProcessSectorManager {
@@ -557,7 +558,7 @@ pub mod sectors_manager_public {
             }
         }
 
-        async fn recovery(&self) {
+        async fn recovery(&mut self) {
             /*
             iterate over sector_dirs
             if there is no tmp dir - add tmp dir
@@ -589,10 +590,14 @@ pub mod sectors_manager_public {
                         }
                         else {
                             // there is tmp folder
-                            // check if there is a file
+                
+                            // if tmp has been created, there is a possibility that dst have been created: either we have to recover tmp or check if there is any
+                            let dst_path_res = self.get_current_dst_file_path(&sector_path).await;
+                            
+                            // check if there is a file in tmp folder
                             let tmp_iter_res = tokio::fs::read_dir(&tmp_dir_path).await;
                             if let Ok(mut tmp_iterator) = tmp_iter_res {
-                                // there should be one tmp file
+                                // there should might one tmp file
                                 if let Ok(tmp_file_result) = tmp_iterator.next_entry().await {
                                     if let Some(tmp_file) = tmp_file_result {
                                         let tmp_file_path = tmp_file.path();
@@ -612,9 +617,9 @@ pub mod sectors_manager_public {
                                             },
                                             Some(content) => {
                                                 // tmp file is correct
-                                               let dst_path_res = self.get_current_dst_file_path(&sector_path).await;
+                                            //    let dst_path_res = self.get_current_dst_file_path(&sector_path).await;
 
-                                               if let Some(dst_path) = dst_path_res {
+                                               if let Some(dst_path) = &dst_path_res {
                                                 // remove previous dst
                                                 self.remove_file(&dst_path, &sector_path).await;
                                                }
@@ -628,9 +633,25 @@ pub mod sectors_manager_public {
                                                 self.write_to_file_sync_file_and_dir(&mut new_dst_file, &sector_path, &content).await;
 
                                                     self.remove_file(&tmp_file_path, &tmp_dir_path).await;
+
+
+                                                    // a new file has been written - 
+                                                    if let Some(_) = &dst_path_res {
+                                                        let sector_idx: u64 = self.get_sector_idx_from_filename(&sector_path);
+                        
+                                                        self.sectors_written_after_recovery.insert(sector_idx);
+                                                    }
                                                }
 
                                             }
+                                        }
+                                    }
+                                    else {
+                                        // there isn't a tmp file, but maybe there is a correct dst then
+                                        if let Some(_) = &dst_path_res {
+                                            let sector_idx: u64 = self.get_sector_idx_from_filename(&sector_path);
+            
+                                            self.sectors_written_after_recovery.insert(sector_idx);
                                         }
                                     }
                                 }
@@ -685,6 +706,22 @@ pub mod sectors_manager_public {
                 let empty_vec: Vec<u8> = vec![0; CONTENT_SIZE];
 
                 return SectorVec(empty_vec);
+            }
+
+            fn get_sector_idx_from_filename(&self, sector_path: &PathBuf) -> u64 {
+                if let Some(fname) = sector_path.file_name() {
+                    if let Some(str_name) = fname.to_str() {
+                        let idx: u64 = str_name.parse().unwrap();
+
+                        return idx;
+                    }
+                }
+
+                return 0;
+            }
+
+            pub fn get_already_written_sectorsafter_recovery(&self) -> HashSet<u64>{
+                return self.sectors_written_after_recovery.clone();
             }
             
             // let split_pair: Vec<&str> = filename.split("_").collect();
@@ -880,9 +917,10 @@ pub mod sectors_manager_public {
 
     /// Path parameter points to a directory to which this method has exclusive access.
     pub async fn build_sectors_manager(path: PathBuf) -> Arc<dyn SectorsManager> {
-        let sector_manager = ProcessSectorManager{
+        let mut sector_manager = ProcessSectorManager{
             root_dir: path,
             hasher: Sha256::new(),
+            sectors_written_after_recovery: HashSet::new(),
         };
         sector_manager.recovery().await;
 
