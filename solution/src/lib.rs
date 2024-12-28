@@ -5,6 +5,7 @@ pub use atomic_register_public::*;
 use bincode::ErrorKind;
 pub use register_client_public::*;
 pub use sectors_manager_public::*;
+use tokio::io::AsyncWriteExt;
 use tokio::task::JoinHandle;
 pub use transfer_public::*;
 
@@ -16,6 +17,10 @@ use tokio::sync::mpsc::{self, unbounded_channel, UnboundedReceiver, UnboundedSen
 use std::sync::Arc;
 
 use uuid::Uuid;
+
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
+type HmacSha256 = Hmac<Sha256>;
 
 type channel_map<T> = HashMap<SectorIdx, (UnboundedSender<T>, UnboundedReceiver<T>)>;
 type ConnectionMap = HashMap<Uuid, JoinHandle<()>>;
@@ -101,7 +106,7 @@ fn is_sector_idx_valid(sector_idx: SectorIdx, n_sectors: u64) -> bool {
     return sector_idx < n_sectors;
 }
 
-fn get_msg_response_type(response: OperationSuccess) -> u8 {
+fn get_msg_response_type(response: &OperationSuccess) -> u8 {
     match response.op_return {
         OperationReturn::Read(..) => {
             READ_RESPONSE_STATUS_CODE
@@ -112,7 +117,8 @@ fn get_msg_response_type(response: OperationSuccess) -> u8 {
     }
 }
 
-fn serialize_response(response: OperationSuccess, status_code: StatusCode) -> Vec<u8> {
+
+fn serialize_response(response: OperationSuccess, status_code: StatusCode, hmac_key: &[u8]) -> Vec<u8> {
     let mut msg: Vec<u8> = Vec::new();
     msg.extend_from_slice(&MAGIC_NUMBER);
 
@@ -120,10 +126,33 @@ fn serialize_response(response: OperationSuccess, status_code: StatusCode) -> Ve
     msg.extend_from_slice(&padding);
 
     msg.push(status_code as u8);
-    msg.push
-}
-fn respond_to_client(mut socket: TcpStream, response: OperationSuccess) {
+    msg.push(get_msg_response_type(&response));
 
+    msg.extend_from_slice(&response.request_identifier.to_be_bytes());
+
+    if let OperationReturn::Read(ReadReturn { read_data }) = response.op_return {
+        let SectorVec(data) = read_data;
+        msg.extend_from_slice(&data);
+    }
+
+    let mac_res = HmacSha256::new_from_slice(hmac_key);
+                
+        match mac_res {
+            Err(_) => {return msg},
+            Ok(mut mac) => {
+                mac.update(&msg);
+                let tag = mac.finalize().into_bytes();
+
+                msg.extend_from_slice(&tag);
+            },
+        }
+
+    msg
+}
+
+async fn respond_to_client(mut socket: TcpStream, response: OperationSuccess, status_code: StatusCode, hmac_key: &[u8]) {
+    let msg = serialize_response(response, status_code, hmac_key);
+    socket.write_all(&msg).await.unwrap();
 }
 
 async fn process_connection(mut socket: TcpStream, addr: SocketAddr, sender: UnboundedSender<Uuid>, handle_id: Uuid,  config: Arc<ConnectionHandlerConfig>) {
@@ -144,6 +173,13 @@ async fn process_connection(mut socket: TcpStream, addr: SocketAddr, sender: Unb
 
             if !is_sector_idx_valid(sector_idx, config.n_sectors) {
                 // send information about the error
+                if let RegisterCommand::Client(ClientRegisterCommand{header, ..}) = command {
+                    let response = OperationSuccess{
+                        request_identifier: header.request_identifier,
+                        op_return: 
+                    };
+                    respond_to_client(socket, response, status_code, hmac_key).await;
+                }
             }
             else if !is_hmac_valid {
                 // send information about error
