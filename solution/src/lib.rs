@@ -106,7 +106,7 @@ fn is_sector_idx_valid(sector_idx: SectorIdx, n_sectors: u64) -> bool {
     return sector_idx < n_sectors;
 }
 
-fn get_msg_response_type(response: &OperationSuccess) -> u8 {
+fn get_msg_response_type_from_operation_success(response: &OperationSuccess) -> u8 {
     match response.op_return {
         OperationReturn::Read(..) => {
             READ_RESPONSE_STATUS_CODE
@@ -117,6 +117,21 @@ fn get_msg_response_type(response: &OperationSuccess) -> u8 {
     }
 }
 
+fn get_msg_type_from_client_register_command(rg_command: &RegisterCommand) -> u8 {
+    if let RegisterCommand::Client(ClientRegisterCommand{header: _, content: ClientRegisterCommandContent::Read}) = rg_command {
+        return READ_RESPONSE_STATUS_CODE;
+    }
+
+    return WRITE_RESPONSE_STATUS_CODE;
+}
+
+fn get_request_id_from_client_register_command(rg_command: &RegisterCommand) -> u64 {
+    if let RegisterCommand::Client(ClientRegisterCommand{header, ..}) = rg_command {
+        return header.request_identifier;
+    }
+
+    return 0;
+}
 
 fn serialize_response(response: OperationSuccess, status_code: StatusCode, hmac_key: &[u8]) -> Vec<u8> {
     let mut msg: Vec<u8> = Vec::new();
@@ -126,7 +141,7 @@ fn serialize_response(response: OperationSuccess, status_code: StatusCode, hmac_
     msg.extend_from_slice(&padding);
 
     msg.push(status_code as u8);
-    msg.push(get_msg_response_type(&response));
+    msg.push(get_msg_response_type_from_operation_success(&response));
 
     msg.extend_from_slice(&response.request_identifier.to_be_bytes());
 
@@ -134,6 +149,7 @@ fn serialize_response(response: OperationSuccess, status_code: StatusCode, hmac_
         let SectorVec(data) = read_data;
         msg.extend_from_slice(&data);
     }
+    
 
     let mac_res = HmacSha256::new_from_slice(hmac_key);
                 
@@ -150,8 +166,35 @@ fn serialize_response(response: OperationSuccess, status_code: StatusCode, hmac_
     msg
 }
 
-async fn respond_to_client(mut socket: TcpStream, response: OperationSuccess, status_code: StatusCode, hmac_key: &[u8]) {
-    let msg = serialize_response(response, status_code, hmac_key);
+fn serialize_error(request_id_not_converted: u64, status_code: StatusCode, hmac_key: &[u8], msg_response_type: u8) -> Vec<u8> {
+    let mut msg: Vec<u8> = Vec::new();
+    msg.extend_from_slice(&MAGIC_NUMBER);
+
+    let padding: [u8; 2] = [0; 2];
+    msg.extend_from_slice(&padding);
+
+    msg.push(status_code as u8);
+    msg.push(msg_response_type);
+
+    msg.extend_from_slice(&request_id_not_converted.to_be_bytes());    
+
+    let mac_res = HmacSha256::new_from_slice(hmac_key);
+                
+        match mac_res {
+            Err(_) => {return msg},
+            Ok(mut mac) => {
+                mac.update(&msg);
+                let tag = mac.finalize().into_bytes();
+
+                msg.extend_from_slice(&tag);
+            },
+        }
+
+    msg
+}
+
+async fn respond_to_client_if_error(mut socket: TcpStream, request_id_not_converted: u64, status_code: StatusCode, hmac_key: &[u8], msg_response_type: u8) {
+    let msg = serialize_error(request_id_not_converted, status_code, hmac_key, msg_response_type);
     socket.write_all(&msg).await.unwrap();
 }
 
@@ -173,19 +216,18 @@ async fn process_connection(mut socket: TcpStream, addr: SocketAddr, sender: Unb
 
             if !is_sector_idx_valid(sector_idx, config.n_sectors) {
                 // send information about the error
-                if let RegisterCommand::Client(ClientRegisterCommand{header, ..}) = command {
-                    let response = OperationSuccess{
-                        request_identifier: header.request_identifier,
-                        op_return: 
-                    };
-                    respond_to_client(socket, response, status_code, hmac_key).await;
+                if let RegisterCommand::Client(_) = &command {
+                    respond_to_client_if_error(socket, get_request_id_from_client_register_command(&command), StatusCode::InvalidSectorIndex, &config.hmac_client_key, get_msg_type_from_client_register_command(&command)).await;
                 }
             }
             else if !is_hmac_valid {
                 // send information about error
+                if let RegisterCommand::Client(_) = &command {
+                    respond_to_client_if_error(socket, get_request_id_from_client_register_command(&command), StatusCode::AuthFailure, &config.hmac_client_key, get_msg_type_from_client_register_command(&command)).await;
+                }
             }
             else {
-                // correct message
+                // correct message - send to channel
             }
         }
     }
