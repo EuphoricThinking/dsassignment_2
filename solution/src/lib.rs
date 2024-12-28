@@ -9,11 +9,17 @@ pub use transfer_public::*;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::{self, unbounded_channel, UnboundedReceiver, UnboundedSender};
 
 type channel_map<T> = HashMap<SectorIdx, (UnboundedSender<T>, UnboundedReceiver<T>)>;
+type ConnectionMap = HashMap<(String, u16), JoinHandle<()>>;
 
+struct ConnectionData {
+    host: String,
+    addr: u16,
+    is_active: bool,
+}
 // use hmac::{Hmac, Mac};
 // use sha2::Sha256;
 // use hmac::digest::KeyInit;
@@ -64,6 +70,27 @@ async fn get_sectors_written_after_recovery(path: &PathBuf) -> HashSet<SectorIdx
     written_sectors
 }
 
+async fn process_connection(socket: TcpStream, addr: u16, sender: UnboundedSender<(String, u16)>) {
+
+}
+
+async fn handle_connections(listener: TcpListener) {
+    let connections: ConnectionMap = HashMap::new();
+    // for deletion of erroneous connections
+    let (connection_sender, connection_receiver) = unbounded_channel::<(String, u16)>();
+
+    loop {
+        tokio::select! {
+        client_connection = listener.accept() => {
+
+        // there might be up to 16 clients, but there might be more processes willing to connect
+            if let Ok((socket, addr)) = client_connection {
+                let spawned_handle = tokio::spawn(process_connection(socket, addr, connection_sender.clone()));
+            }
+        }
+        }
+    }
+}
 pub async fn run_register_process(config: Configuration) {
     let (host, port) = get_own_number_in_tcp_ports(config.public.self_rank, &config.public.tcp_locations);
     let address = format!("{}:{}", host, port);
@@ -83,8 +110,10 @@ pub async fn run_register_process(config: Configuration) {
     let sector_manager = build_sectors_manager(config.public.storage_dir).await;
     // let sectors_written_after_recovery = sector_manager.get_
     let sectors_written_after_recovery = get_sectors_written_after_recovery(&root_path);
+    // let connection_tasks: HashMap<(String, u16), JoinHandle<()>> = HashMap::new();
 
     tokio::select! {
+        // TODO czy potrzebne?
         internal_msg = internal_recv_channel.recv() => {
 
         }
