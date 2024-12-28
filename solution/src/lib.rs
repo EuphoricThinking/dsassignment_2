@@ -73,8 +73,9 @@ async fn get_sectors_written_after_recovery(path: &PathBuf) -> HashSet<SectorIdx
     written_sectors
 }
 
-async fn process_connection(socket: TcpStream, addr: SocketAddr, sender: UnboundedSender<Uuid>, handle_id: Uuid) {
-
+async fn process_connection(mut socket: TcpStream, addr: SocketAddr, sender: UnboundedSender<Uuid>, handle_id: Uuid,  hmac_system_key: &[u8; 64],
+    hmac_client_key: &[u8; 32]) {
+    let deserialize_result = deserialize_register_command(&mut socket, hmac_system_key, hmac_client_key).await;
 }
 
 async fn handle_connections(listener: TcpListener) {
@@ -106,6 +107,7 @@ async fn handle_connections(listener: TcpListener) {
         }
     }
 }
+
 pub async fn run_register_process(config: Configuration) {
     let (host, port) = get_own_number_in_tcp_ports(config.public.self_rank, &config.public.tcp_locations);
     let address = format!("{}:{}", host, port);
@@ -118,8 +120,12 @@ pub async fn run_register_process(config: Configuration) {
      */
     let mut active_coin_channels: channel_map<bool> = HashMap::new();
     // let mut suicidal_channels: channel_map<SectorIdx> = HashMap::new();
-    let (mut internal_send_channel, mut internal_recv_channel) = unbounded_channel::<SuicideOrMsg>();
+    // let (mut internal_send_channel, mut internal_recv_channel) = unbounded_channel::<SuicideOrMsg>();
     let mut register_msg_queues: channel_map<RegisterCommand> = HashMap::new();
+    // registers inform the process that they are probably not needed
+    let (suicidal_sender, mut suicidal_receiver) = unbounded_channel::<SectorIdx>();
+    // messages from clients, other processes and internal
+    let (rcommands_sender, mut rcommands_receiver) = unbounded_channel::<(RegisterCommand, SectorIdx)>();
 
     let root_path = config.public.storage_dir.clone();
     let sector_manager = build_sectors_manager(config.public.storage_dir).await;
@@ -128,18 +134,8 @@ pub async fn run_register_process(config: Configuration) {
     // let connection_tasks: HashMap<(String, u16), JoinHandle<()>> = HashMap::new();
 
     tokio::spawn(handle_connections(listener));
+
     
-    tokio::select! {
-        // TODO czy potrzebne?
-        internal_msg = internal_recv_channel.recv() => {
-
-        }
-        client_msg = listener.accept() => {
-            if let Ok((client_socket, client_addr)) = client_msg {
-
-            }
-        }
-    }
     
     unimplemented!()
 }
