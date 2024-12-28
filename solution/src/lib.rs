@@ -10,10 +10,13 @@ pub use transfer_public::*;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use tokio::net::{TcpListener, TcpStream};
+use core::net::SocketAddr;
 use tokio::sync::mpsc::{self, unbounded_channel, UnboundedReceiver, UnboundedSender};
 
+use uuid::Uuid;
+
 type channel_map<T> = HashMap<SectorIdx, (UnboundedSender<T>, UnboundedReceiver<T>)>;
-type ConnectionMap = HashMap<(String, u16), JoinHandle<()>>;
+type ConnectionMap = HashMap<Uuid, JoinHandle<()>>;
 
 struct ConnectionData {
     host: String,
@@ -70,24 +73,36 @@ async fn get_sectors_written_after_recovery(path: &PathBuf) -> HashSet<SectorIdx
     written_sectors
 }
 
-async fn process_connection(socket: TcpStream, addr: u16, sender: UnboundedSender<(String, u16)>) {
+async fn process_connection(socket: TcpStream, addr: SocketAddr, sender: UnboundedSender<Uuid>, handle_id: Uuid) {
 
 }
 
 async fn handle_connections(listener: TcpListener) {
-    let connections: ConnectionMap = HashMap::new();
+    let mut connections: ConnectionMap = HashMap::new();
     // for deletion of erroneous connections
-    let (connection_sender, connection_receiver) = unbounded_channel::<(String, u16)>();
+    let (connection_sender, mut connection_receiver) = unbounded_channel::<Uuid>();
 
     loop {
         tokio::select! {
-        client_connection = listener.accept() => {
+            client_connection = listener.accept() => {
 
-        // there might be up to 16 clients, but there might be more processes willing to connect
-            if let Ok((socket, addr)) = client_connection {
-                let spawned_handle = tokio::spawn(process_connection(socket, addr, connection_sender.clone()));
+            // there might be up to 16 clients, but there might be more processes willing to connect
+                if let Ok((socket, addr)) = client_connection {
+                    let handle_id = uuid::Uuid::new_v4();
+                    let spawned_handle = tokio::spawn(process_connection(socket, addr, connection_sender.clone(), handle_id));
+                    connections.insert(handle_id, spawned_handle);
+                }
             }
-        }
+
+            error_ocurred = connection_receiver.recv() => {
+                match error_ocurred {
+                    None => {},
+                    Some(client_id) => {
+                        // cleanup of connections which returned error
+                        connections.remove(&client_id);
+                    }
+                }
+            }
         }
     }
 }
@@ -112,6 +127,8 @@ pub async fn run_register_process(config: Configuration) {
     let sectors_written_after_recovery = get_sectors_written_after_recovery(&root_path);
     // let connection_tasks: HashMap<(String, u16), JoinHandle<()>> = HashMap::new();
 
+    tokio::spawn(handle_connections(listener));
+    
     tokio::select! {
         // TODO czy potrzebne?
         internal_msg = internal_recv_channel.recv() => {
