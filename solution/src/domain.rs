@@ -22,6 +22,10 @@ pub static UPPER_HALVES: [u8; 3] = [EXTERNAL_UPPER_HALF, PROCESS_RESPONSE_ADD, P
 pub static TIMESTAMP_WR_RANK_SEP: & 'static str = ".";
 
 pub static CONTENT_SIZE: usize = 4096;
+
+pub static READ_RESPONSE_STATUS_CODE: u8 = 0x41;
+pub static WRITE_RESPONSE_STATUS_CODE: u8 = 0x42;
+
 pub struct Configuration {
     /// Hmac key to verify and sign internal requests.
     pub hmac_system_key: [u8; 64],

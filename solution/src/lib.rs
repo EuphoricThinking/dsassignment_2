@@ -101,6 +101,31 @@ fn is_sector_idx_valid(sector_idx: SectorIdx, n_sectors: u64) -> bool {
     return sector_idx < n_sectors;
 }
 
+fn get_msg_response_type(response: OperationSuccess) -> u8 {
+    match response.op_return {
+        OperationReturn::Read(..) => {
+            READ_RESPONSE_STATUS_CODE
+        },
+        OperationReturn::Write => {
+            WRITE_RESPONSE_STATUS_CODE
+        }
+    }
+}
+
+fn serialize_response(response: OperationSuccess, status_code: StatusCode) -> Vec<u8> {
+    let mut msg: Vec<u8> = Vec::new();
+    msg.extend_from_slice(&MAGIC_NUMBER);
+
+    let padding: [u8; 2] = [0; 2];
+    msg.extend_from_slice(&padding);
+
+    msg.push(status_code as u8);
+    msg.push
+}
+fn respond_to_client(mut socket: TcpStream, response: OperationSuccess) {
+
+}
+
 async fn process_connection(mut socket: TcpStream, addr: SocketAddr, sender: UnboundedSender<Uuid>, handle_id: Uuid,  config: Arc<ConnectionHandlerConfig>) {
     let deserialize_result = deserialize_register_command(&mut socket, &config.hmac_system_key, &config.hmac_client_key).await;
 
