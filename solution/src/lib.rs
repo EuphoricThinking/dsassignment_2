@@ -435,7 +435,7 @@ pub mod sectors_manager_public {
         // RWLock to be implemented
         // written_sectors: Arc<Mutex<HashSet<u64>>>,
         hasher: Sha256,
-        sectors_written_after_recovery: HashSet<u64>,
+        sectors_written_after_recovery: Option<HashSet<u64>>,
     }
 
     impl ProcessSectorManager {
@@ -639,7 +639,7 @@ pub mod sectors_manager_public {
                                                     if let Some(_) = &dst_path_res {
                                                         let sector_idx: u64 = self.get_sector_idx_from_filename(&sector_path);
                         
-                                                        self.sectors_written_after_recovery.insert(sector_idx);
+                                                        self.sectors_written_after_recovery.get_or_insert_with(HashSet::new).insert(sector_idx);
                                                     }
                                                }
 
@@ -651,7 +651,7 @@ pub mod sectors_manager_public {
                                         if let Some(_) = &dst_path_res {
                                             let sector_idx: u64 = self.get_sector_idx_from_filename(&sector_path);
             
-                                            self.sectors_written_after_recovery.insert(sector_idx);
+                                            self.sectors_written_after_recovery.get_or_insert_with(HashSet::new).insert(sector_idx);
                                         }
                                     }
                                 }
@@ -720,8 +720,13 @@ pub mod sectors_manager_public {
                 return 0;
             }
 
-            pub fn get_already_written_sectorsafter_recovery(&self) -> HashSet<u64>{
-                return self.sectors_written_after_recovery.clone();
+            pub fn get_already_written_sectorsafter_recovery(&mut self) -> HashSet<u64>{
+                // return self.sectors_written_after_recovery.clone();
+                let sectors_res = self.sectors_written_after_recovery.take();
+                match sectors_res {
+                    None => HashSet::new(),
+                    Some(sectors) => sectors,
+                }
             }
             
             // let split_pair: Vec<&str> = filename.split("_").collect();
@@ -920,7 +925,7 @@ pub mod sectors_manager_public {
         let mut sector_manager = ProcessSectorManager{
             root_dir: path,
             hasher: Sha256::new(),
-            sectors_written_after_recovery: HashSet::new(),
+            sectors_written_after_recovery: Some(HashSet::new()),
         };
         sector_manager.recovery().await;
 
