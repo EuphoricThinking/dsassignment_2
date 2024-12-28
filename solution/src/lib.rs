@@ -11,6 +11,8 @@ use std::collections::{HashMap, HashSet};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
+type channel_map<T> = HashMap<SectorIdx, (UnboundedSender<T>, UnboundedReceiver<T>)>;
+
 // use hmac::{Hmac, Mac};
 // use sha2::Sha256;
 // use hmac::digest::KeyInit;
@@ -35,6 +37,7 @@ pub async fn run_register_process(config: Configuration) {
     let mut register_handlers: HashMap<SectorIdx, JoinHandle<()>> = HashMap::new();
     let mut active_coin_channels: HashMap<SectorIdx, (UnboundedSender<bool>,
         UnboundedReceiver<bool>)> = HashMap::new();
+    let mut suicidal_channels: Has
     
     unimplemented!()
 }
