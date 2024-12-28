@@ -4,7 +4,12 @@ pub use crate::domain::*;
 pub use atomic_register_public::*;
 pub use register_client_public::*;
 pub use sectors_manager_public::*;
+use tokio::task::JoinHandle;
 pub use transfer_public::*;
+
+use std::collections::{HashMap, HashSet};
+use tokio::net::TcpListener;
+use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 // use hmac::{Hmac, Mac};
 // use sha2::Sha256;
@@ -15,7 +20,22 @@ pub use transfer_public::*;
 // use hmac::Mac;
 // use hmac::digest::KeyInit;
 
+fn get_own_number_in_tcp_ports(self_rank: u8, tcp_locations: &Vec<(String, u16)>) -> (String, u16) {
+    let self_idx = self_rank.saturating_sub(1);
+    let port_data = tcp_locations[self_idx as usize].clone();
+
+    port_data
+}
+
 pub async fn run_register_process(config: Configuration) {
+    let (host, port) = get_own_number_in_tcp_ports(config.public.self_rank, &config.public.tcp_locations);
+    let address = format!("{}:{}", host, port);
+    let listener = TcpListener::bind(address).await.unwrap();
+
+    let mut register_handlers: HashMap<SectorIdx, JoinHandle<()>> = HashMap::new();
+    let mut active_coin_channels: HashMap<SectorIdx, (UnboundedSender<bool>,
+        UnboundedReceiver<bool>)> = HashMap::new();
+    
     unimplemented!()
 }
 
