@@ -8,6 +8,7 @@ use tokio::task::JoinHandle;
 pub use transfer_public::*;
 
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::{self, unbounded_channel, UnboundedReceiver, UnboundedSender};
 
@@ -29,6 +30,40 @@ fn get_own_number_in_tcp_ports(self_rank: u8, tcp_locations: &Vec<(String, u16)>
     port_data
 }
 
+fn get_sector_idx_from_filename(sector_path: &PathBuf) -> u64 {
+    if let Some(fname) = sector_path.file_name() {
+        if let Some(str_name) = fname.to_str() {
+            let idx: u64 = str_name.parse().unwrap();
+
+            return idx;
+        }
+    }
+
+    return 0;
+}
+
+async fn get_sectors_written_after_recovery(path: &PathBuf) -> HashSet<SectorIdx> {
+    let iterator_dir = tokio::fs::read_dir(path).await;
+    let mut written_sectors: HashSet<SectorIdx> = HashSet::new();
+
+    if let Ok(mut root_iterator) = iterator_dir {
+        while let Ok(Some(sector_entry)) = root_iterator.next_entry().await {
+            let sector_path = sector_entry.path();
+            let sector_iter = tokio::fs::read_dir(&sector_path).await;
+            if let Ok(mut sector_dir) = sector_iter {
+                while let Ok(Some(inside_sector)) = sector_dir.next_entry().await {
+                    if inside_sector.path().is_file() {
+                        let idx = get_sector_idx_from_filename(&sector_path);
+                        written_sectors.insert(idx);
+                    }
+                }
+            }
+        }
+    }
+
+    written_sectors
+}
+
 pub async fn run_register_process(config: Configuration) {
     let (host, port) = get_own_number_in_tcp_ports(config.public.self_rank, &config.public.tcp_locations);
     let address = format!("{}:{}", host, port);
@@ -41,8 +76,24 @@ pub async fn run_register_process(config: Configuration) {
      */
     let mut active_coin_channels: channel_map<bool> = HashMap::new();
     // let mut suicidal_channels: channel_map<SectorIdx> = HashMap::new();
-    let (mut ibternal_send_channel, mut internal_recv_channel) = unbounded_channel::<SuicideOrMsg>();
+    let (mut internal_send_channel, mut internal_recv_channel) = unbounded_channel::<SuicideOrMsg>();
     let mut register_msg_queues: channel_map<RegisterCommand> = HashMap::new();
+
+    let root_path = config.public.storage_dir.clone();
+    let sector_manager = build_sectors_manager(config.public.storage_dir).await;
+    // let sectors_written_after_recovery = sector_manager.get_
+    let sectors_written_after_recovery = get_sectors_written_after_recovery(&root_path);
+
+    tokio::select! {
+        internal_msg = internal_recv_channel.recv() => {
+
+        }
+        client_msg = listener.accept() => {
+            if let Ok((client_socket, client_addr)) = client_msg {
+
+            }
+        }
+    }
     
     unimplemented!()
 }
@@ -456,6 +507,7 @@ pub mod sectors_manager_public {
     use uuid::timestamp;
     use std::io::Error;
     use std::ffi::OsStr;
+    use crate::get_sector_idx_from_filename;
 
     
     struct ProcessSectorManager {
@@ -665,7 +717,7 @@ pub mod sectors_manager_public {
 
                                                     // a new file has been written - 
                                                     if let Some(_) = &dst_path_res {
-                                                        let sector_idx: u64 = self.get_sector_idx_from_filename(&sector_path);
+                                                        let sector_idx: u64 = get_sector_idx_from_filename(&sector_path);
                         
                                                         self.sectors_written_after_recovery.get_or_insert_with(HashSet::new).insert(sector_idx);
                                                     }
@@ -677,7 +729,7 @@ pub mod sectors_manager_public {
                                     else {
                                         // there isn't a tmp file, but maybe there is a correct dst then
                                         if let Some(_) = &dst_path_res {
-                                            let sector_idx: u64 = self.get_sector_idx_from_filename(&sector_path);
+                                            let sector_idx: u64 = get_sector_idx_from_filename(&sector_path);
             
                                             self.sectors_written_after_recovery.get_or_insert_with(HashSet::new).insert(sector_idx);
                                         }
@@ -736,18 +788,6 @@ pub mod sectors_manager_public {
                 return SectorVec(empty_vec);
             }
 
-            fn get_sector_idx_from_filename(&self, sector_path: &PathBuf) -> u64 {
-                if let Some(fname) = sector_path.file_name() {
-                    if let Some(str_name) = fname.to_str() {
-                        let idx: u64 = str_name.parse().unwrap();
-
-                        return idx;
-                    }
-                }
-
-                return 0;
-            }
-
             pub fn get_already_written_sectorsafter_recovery(&mut self) -> HashSet<u64>{
                 // return self.sectors_written_after_recovery.clone();
                 let sectors_res = self.sectors_written_after_recovery.take();
@@ -784,7 +824,6 @@ pub mod sectors_manager_public {
         //     }
         //     // return None;
         // }
-
     }
 
     #[async_trait::async_trait]
