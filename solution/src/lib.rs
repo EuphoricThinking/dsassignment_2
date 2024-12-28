@@ -9,7 +9,7 @@ pub use transfer_public::*;
 
 use std::collections::{HashMap, HashSet};
 use tokio::net::TcpListener;
-use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{self, unbounded_channel, UnboundedReceiver, UnboundedSender};
 
 type channel_map<T> = HashMap<SectorIdx, (UnboundedSender<T>, UnboundedReceiver<T>)>;
 
@@ -34,10 +34,15 @@ pub async fn run_register_process(config: Configuration) {
     let address = format!("{}:{}", host, port);
     let listener = TcpListener::bind(address).await.unwrap();
 
+    // tasks managing registers
     let mut register_handlers: HashMap<SectorIdx, JoinHandle<()>> = HashMap::new();
-    let mut active_coin_channels: HashMap<SectorIdx, (UnboundedSender<bool>,
-        UnboundedReceiver<bool>)> = HashMap::new();
-    let mut suicidal_channels: Has
+    /*
+    channels granting permission to work by a register; if register detects empty queues and expresses a wish to be dropped, the process checks if the reigster is really not needed; if it is needed, it gives a coin, allowing work; 
+     */
+    let mut active_coin_channels: channel_map<bool> = HashMap::new();
+    // let mut suicidal_channels: channel_map<SectorIdx> = HashMap::new();
+    let (mut ibternal_send_channel, mut internal_recv_channel) = unbounded_channel::<SuicideOrMsg>();
+    let mut register_msg_queues: channel_map<RegisterCommand> = HashMap::new();
     
     unimplemented!()
 }

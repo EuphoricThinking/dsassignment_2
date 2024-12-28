@@ -50,6 +50,12 @@ pub struct SectorVec(pub Vec<u8>);
 
 pub type SectorIdx = u64;
 
+#[derive (Debug, Clone)]
+pub enum SuicideOrMsg {
+    Suicide(SectorIdx),
+    RCMessage(RegisterCommand),
+}
+
 #[derive(Debug, Clone)]
 pub enum RegisterCommand {
     Client(ClientRegisterCommand),
