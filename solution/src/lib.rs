@@ -2,6 +2,7 @@ mod domain;
 
 pub use crate::domain::*;
 pub use atomic_register_public::*;
+use bincode::ErrorKind;
 pub use register_client_public::*;
 pub use sectors_manager_public::*;
 use tokio::task::JoinHandle;
@@ -12,6 +13,7 @@ use std::path::PathBuf;
 use tokio::net::{TcpListener, TcpStream};
 use core::net::SocketAddr;
 use tokio::sync::mpsc::{self, unbounded_channel, UnboundedReceiver, UnboundedSender};
+use std::sync::Arc;
 
 use uuid::Uuid;
 
@@ -22,6 +24,15 @@ struct ConnectionData {
     host: String,
     addr: u16,
     is_active: bool,
+}
+
+struct ConnectionHandlerConfig {
+    /// Hmac key to verify and sign internal requests.
+    hmac_system_key: [u8; 64],
+    /// Hmac key to verify client requests.
+    hmac_client_key: [u8; 32],
+    n_sectors: u64,
+    msg_sender: UnboundedSender<(RegisterCommand, SectorIdx)>,
 }
 // use hmac::{Hmac, Mac};
 // use sha2::Sha256;
@@ -73,12 +84,53 @@ async fn get_sectors_written_after_recovery(path: &PathBuf) -> HashSet<SectorIdx
     written_sectors
 }
 
-async fn process_connection(mut socket: TcpStream, addr: SocketAddr, sender: UnboundedSender<Uuid>, handle_id: Uuid,  hmac_system_key: &[u8; 64],
-    hmac_client_key: &[u8; 32]) {
-    let deserialize_result = deserialize_register_command(&mut socket, hmac_system_key, hmac_client_key).await;
+fn get_sector_idx_from_command(rg_command: &RegisterCommand) -> SectorIdx {
+    match rg_command {
+        RegisterCommand::Client(ClientRegisterCommand{header, ..}) => {
+            return header.sector_idx;
+        },
+        RegisterCommand::System(SystemRegisterCommand{header, ..}) => {
+            return header.sector_idx;
+        }
+    }
 }
 
-async fn handle_connections(listener: TcpListener) {
+fn is_sector_idx_valid(sector_idx: SectorIdx, n_sectors: u64) -> bool {
+    // let sector_idx = get_sector_idx_from_command(rg_command);
+
+    return sector_idx < n_sectors;
+}
+
+async fn process_connection(mut socket: TcpStream, addr: SocketAddr, sender: UnboundedSender<Uuid>, handle_id: Uuid,  config: Arc<ConnectionHandlerConfig>) {
+    let deserialize_result = deserialize_register_command(&mut socket, &config.hmac_system_key, &config.hmac_client_key).await;
+
+    match deserialize_result {
+        Err(ref err) if err.kind() == std::io::ErrorKind::InvalidInput => {
+            // TODO send message to client, serialized with error msg
+        },
+        Err(ref err) if err.kind() == std::io::ErrorKind::Other => {
+
+        },
+        Err(_) => {
+            // error in connection - try to send and send as inactive
+        },
+        Ok((command, is_hmac_valid)) => {
+            let sector_idx = get_sector_idx_from_command(&command);
+
+            if !is_sector_idx_valid(sector_idx, config.n_sectors) {
+                // send information about the error
+            }
+            else if !is_hmac_valid {
+                // send information about error
+            }
+            else {
+                // correct message
+            }
+        }
+    }
+}
+
+async fn handle_connections(listener: TcpListener, config: Arc<ConnectionHandlerConfig>) {
     let mut connections: ConnectionMap = HashMap::new();
     // for deletion of erroneous connections
     let (connection_sender, mut connection_receiver) = unbounded_channel::<Uuid>();
@@ -90,7 +142,7 @@ async fn handle_connections(listener: TcpListener) {
             // there might be up to 16 clients, but there might be more processes willing to connect
                 if let Ok((socket, addr)) = client_connection {
                     let handle_id = uuid::Uuid::new_v4();
-                    let spawned_handle = tokio::spawn(process_connection(socket, addr, connection_sender.clone(), handle_id));
+                    let spawned_handle = tokio::spawn(process_connection(socket, addr, connection_sender.clone(), handle_id, config.clone()));
                     connections.insert(handle_id, spawned_handle);
                 }
             }
@@ -133,7 +185,8 @@ pub async fn run_register_process(config: Configuration) {
     let sectors_written_after_recovery = get_sectors_written_after_recovery(&root_path);
     // let connection_tasks: HashMap<(String, u16), JoinHandle<()>> = HashMap::new();
 
-    tokio::spawn(handle_connections(listener));
+    let config_for_connections = Arc::new(ConnectionHandlerConfig{hmac_system_key: config.hmac_system_key, hmac_client_key: config.hmac_client_key, n_sectors: config.public.n_sectors, msg_sender: rcommands_sender.clone()});
+    tokio::spawn(handle_connections(listener, config_for_connections.clone()));
 
     
     
@@ -1239,6 +1292,8 @@ pub mod transfer_public {
 
                     let mut tag: [u8; 32] = [0; 32];
                     data.read_exact(tag.as_mut()).await?;
+
+                    // TODO check if sector is correct
 
                     let hmac_result = verify_hmac_tag(&msg, &tag, hmac_client_key);
 
