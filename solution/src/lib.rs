@@ -31,9 +31,11 @@ type ConnectionMap = HashMap<Uuid, JoinHandle<()>>;
 
 type ClientResponseSender = UnboundedSender<(OperationSuccess, StatusCode)>;
 type ClientResponseReceiver = UnboundedReceiver<(OperationSuccess, StatusCode)>;
-type RCommandSender = UnboundedSender<RegisterCommand>;
 
-type MessagesToDelegate = (RegisterCommand, Option<SuccesCallback>);
+type RCommandSender = UnboundedSender<RegisterCommand>;
+type RCommandReceiver = UnboundedReceiver<RegisterCommand>;
+
+type MessagesToDelegate = (RegisterCommand, Option<ClientResponseSender>);
 
 type MessagesToSectorsSender = UnboundedSender<MessagesToDelegate>;
 type MessagesToSectorsReceiver = UnboundedSender<MessagesToDelegate>;
@@ -59,7 +61,7 @@ struct ConnectionHandlerConfig {
     // messages to be processed by registers
     msg_sender: MessagesToSectorsSender,
     // channels to signal the end of client task and possibility of register removal
-    suicide_sender: UnboundedSender<u64>,
+    // suicide_sender: UnboundedSender<u64>,
     register_client: Arc<ProcessRegisterClient>,
 }
 // use hmac::{Hmac, Mac};
@@ -269,7 +271,7 @@ async fn process_responses_to_clients(mut socket_to_write: OwnedWriteHalf, hmac_
     }
 }
 
-async fn create_a_closure(client_response_sender: ClientResponseSender, suicide_sender: UnboundedSender<u64>, sector_idx: u64) ->  Box<
+async fn create_a_closure(client_response_sender: ClientResponseSender, suicide_sender: UnboundedSender<u64>, sector_idx: u64, client_request_receiver: Arc<RCommandReceiver>, internal_requests_receiver: Arc<RCommandReceiver>) ->  Box<
 dyn FnOnce(OperationSuccess) -> Pin<Box<dyn Future<Output = ()> + Send>>
     + Send
     + Sync,
@@ -277,7 +279,11 @@ dyn FnOnce(OperationSuccess) -> Pin<Box<dyn Future<Output = ()> + Send>>
     Box::new(move |success: OperationSuccess| {
         Box::pin(async move {
             client_response_sender.send((success, StatusCode::Ok)).unwrap();
-            suicide_sender.send(sector_idx);
+
+            if internal_requests_receiver.is_empty() && client_request_receiver.is_empty() {
+                // to be confirmed later by the process
+                suicide_sender.send(sector_idx);
+            }
         })
     })
 
@@ -356,17 +362,18 @@ async fn process_connection(socket: TcpStream, addr: SocketAddr, error_sender: U
                     if from another process -> send to register client, in order to note which messages have been confirmed
                     */
                     if let RegisterCommand::Client(ClientRegisterCommand{header, content}) = &command {
-                        let closure = create_a_closure(response_msg_sender.clone(), config.suicide_sender.clone(), header.sector_idx).await;
+                        // let closure = create_a_closure(response_msg_sender.clone(), config.suicide_sender.clone(), header.sector_idx).await;
 
-                        config.msg_sender.send((command, Some(closure))).unwrap();
+                        config.msg_sender.send((command, Some(response_msg_sender.clone()))).unwrap();
                     }
                     else {
                         if let RegisterCommand::System(_) = &command {
                            
                             // a previous message is removed from the set of messages to be sent in StubbronLink implementation if we have received an expected response
-                            if is_msg_an_expected_system_response(&command) {
-                                config.register_client.register_response(command.clone());
-                            }
+                            // if is_msg_an_expected_system_response(&command) {
+                            // there is always a message to cancel
+                            config.register_client.register_response(command.clone());
+                            // }
 
                             // send a command to the process
                             config.msg_sender.send((command, None)).unwrap();
@@ -436,7 +443,7 @@ pub async fn run_register_process(config: Configuration) {
 
     let register_client = Arc::new(ProcessRegisterClient::new(config.public.tcp_locations.clone()).await);
 
-    let config_for_connections = Arc::new(ConnectionHandlerConfig{hmac_system_key: config.hmac_system_key, hmac_client_key: config.hmac_client_key, n_sectors: config.public.n_sectors, msg_sender: rcommands_sender.clone(), suicide_sender: suicidal_sender.clone(), register_client: register_client.clone()});
+    let config_for_connections = Arc::new(ConnectionHandlerConfig{hmac_system_key: config.hmac_system_key, hmac_client_key: config.hmac_client_key, n_sectors: config.public.n_sectors, msg_sender: rcommands_sender.clone(), register_client: register_client.clone()});
     tokio::spawn(handle_connections(listener, config_for_connections.clone()));
 
     
@@ -1749,21 +1756,23 @@ pub mod transfer_public {
 
 struct ProcessRegisterClient {
     // indices in vectors indicate the corresponding process
-    tcp_locations: Vec<(String, u16)>,
+    tcp_locations: Arc<Vec<(String, u16)>>,
     // messages to be sent to the processes
-    process_channels: Vec<RCommandSender>,
+    process_channels: Arc<Vec<RCommandSender>>,
     // if connection receives a message regarding a particular register
-    ack_channels: Vec<RCommandSender>,
+    ack_channels: Arc<Vec<RCommandSender>>,
     // task implementing StubbornLinks for connection management
-    stubborn_links: Vec<JoinHandle<()>>,
+    stubborn_links: Arc<Vec<JoinHandle<()>>>,
     // for redirection of messages sent to itself
     self_rank: u8,
     // channel for messages to itself
+    // TODO clone before sending a message?
     self_msg_sender: MessagesToSectorsSender,
 }
 
 impl ProcessRegisterClient{
     fn register_response(&self, msg: RegisterCommand) {
+        //clone sender befoer using it
         unimplemented!()
     }
 
