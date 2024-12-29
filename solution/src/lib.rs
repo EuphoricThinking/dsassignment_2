@@ -1880,6 +1880,16 @@ impl ProcessRegisterClient{
         command
     }
 
+    fn is_message_to_itself(self_rank: u8, command: &RegisterCommand) -> bool {
+        if let RegisterCommand::System(SystemRegisterCommand{header, ..}) = command {
+            if header.process_identifier == self_rank {
+                return true;
+            }
+        }
+
+        false
+    }
+
     // fn remove_unnecessary_msg_from_to_be_sent_set(response: RegisterCommand,
     // messages: &mut RetransmitionMap) {
     //     // delete messages if either of the processes proceeds
@@ -1942,7 +1952,11 @@ impl ProcessRegisterClient{
 
                                         if is_readreturn {
                                             let updated_command = ProcessRegisterClient::get_command_with_updated_msg_ident(command, msg_ident);
-                                            acks_to_be_resent.insert(msg_ident, updated_command);
+                                            acks_to_be_resent.insert(msg_ident, updated_command.clone());
+
+                                            // remove write_proc from map
+                                            // readreturn checks also for write_proc
+                                            messages_to_be_resent.remove(&get_sector_idx_from_command(&updated_command));
 
                                             let res = serialize_register_command(&updated_command, &mut stream, hmac_system_key).await;
 
@@ -1958,21 +1972,32 @@ impl ProcessRegisterClient{
                                         }
                                         else {
                                             // just send a message
+                                            if ProcessRegisterClient::is_message_to_itself(&command, self_rank) {
 
-                                            /*
-                                            if an entry for a given sector idx already existed, its value is updated, therefore progressing algorithm erases old entries for a given sector
-                                            
-                                             */
-                                            messages_to_be_resent.insert(get_sector_idx_from_command(&command), command.clone());
-                                            let res = serialize_register_command(&command, &mut stream, hmac_system_key).await;
+                                            }
+                                            else {
 
-                                            match res {
-                                                Err(_) => {
-                                                    // error in sending, probably reconnection needed
-                                                    // exiting inner loop in order to connect to the socket in the outer loop
-                                                    break;
-                                                },
-                                                Ok(_) => {}
+                                                if is_msg_an_ACK(&command) {
+                                                    acks_to_be_resent.insert(get_msg_uuid_if_systemcommand(&command), command.clone());
+                                                }
+                                                else {
+                                                    /*
+                                                    if an entry for a given sector idx already existed, its value is updated, therefore progressing algorithm erases old entries for a given sector
+                                                    Therefore, there is no need for explicit message removal
+                                                    
+                                                    */
+                                                    messages_to_be_resent.insert(get_sector_idx_from_command(&command), command.clone());
+                                                }
+                                                let res = serialize_register_command(&command, &mut stream, hmac_system_key).await;
+
+                                                match res {
+                                                    Err(_) => {
+                                                        // error in sending, probably reconnection needed
+                                                        // exiting inner loop in order to connect to the socket in the outer loop
+                                                        break;
+                                                    },
+                                                    Ok(_) => {}
+                                                }
                                             }
                                         }
                                     }
@@ -1995,7 +2020,30 @@ impl ProcessRegisterClient{
                             }
 
                             _ = retransmition_tick.tick() => {
+                                //retransmission tick
+                                for (_, msg) in &messages_to_be_resent {
+                                    let res = serialize_register_command(&msg, &mut stream, hmac_system_key).await;
+                                    match res {
+                                        Err(_) => {
+                                            // trying to reconnect in order to fix the conection error
+                                            break;
+                                        }
+                                        Ok(_) => {},
+                                    }
+                                }
 
+                                for (_, ack) in &acks_to_be_resent {
+                                    let res = serialize_register_command(&ack, &mut stream, hmac_system_key).await;
+                                    match res {
+                                        Err(_) => {
+                                            // trying to reconnect in order to fix the conection error
+                                            break;
+                                        }
+                                        Ok(_) => {},
+                                    }
+                                }
+
+                                // for (_, ack)
                             }
 
                         }
