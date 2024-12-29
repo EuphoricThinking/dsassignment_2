@@ -145,11 +145,12 @@ fn serialize_response(response: OperationSuccess, status_code: StatusCode, hmac_
 
     msg.extend_from_slice(&response.request_identifier.to_be_bytes());
 
-    if let OperationReturn::Read(ReadReturn { read_data }) = response.op_return {
-        let SectorVec(data) = read_data;
-        msg.extend_from_slice(&data);
+    if status_code != StatusCode::Ok {
+        if let OperationReturn::Read(ReadReturn { read_data }) = response.op_return {
+            let SectorVec(data) = read_data;
+            msg.extend_from_slice(&data);
+        }
     }
-    
 
     let mac_res = HmacSha256::new_from_slice(hmac_key);
                 
@@ -166,40 +167,70 @@ fn serialize_response(response: OperationSuccess, status_code: StatusCode, hmac_
     msg
 }
 
-fn serialize_error(request_id_not_converted: u64, status_code: StatusCode, hmac_key: &[u8], msg_response_type: u8) -> Vec<u8> {
-    let mut msg: Vec<u8> = Vec::new();
-    msg.extend_from_slice(&MAGIC_NUMBER);
+fn get_error_operation_success(rg_command: RegisterCommand) -> OperationSuccess {
+    if let RegisterCommand::Client(ClientRegisterCommand{header, content}) = rg_command {
 
-    let padding: [u8; 2] = [0; 2];
-    msg.extend_from_slice(&padding);
+        if let ClientRegisterCommandContent::Write{..} = content {
+            let operation_success = OperationSuccess{
+                request_identifier: header.request_identifier,
+                op_return: OperationReturn::Write,
+            };
 
-    msg.push(status_code as u8);
-    msg.push(msg_response_type);
-
-    msg.extend_from_slice(&request_id_not_converted.to_be_bytes());    
-
-    let mac_res = HmacSha256::new_from_slice(hmac_key);
-                
-        match mac_res {
-            Err(_) => {return msg},
-            Ok(mut mac) => {
-                mac.update(&msg);
-                let tag = mac.finalize().into_bytes();
-
-                msg.extend_from_slice(&tag);
-            },
+            return operation_success;
         }
+        else {
+            let operation_success = OperationSuccess{
+                request_identifier: header.request_identifier,
+                op_return: OperationReturn::Read(ReadReturn{read_data: SectorVec(Vec::new())})
+            };
 
-    msg
+            return operation_success;
+        }
+    }
+
+    OperationSuccess{
+        request_identifier: 0,
+        op_return: OperationReturn::Write,
+    }
+    // unimplemented!()
 }
 
-async fn respond_to_client_if_error(mut socket: TcpStream, request_id_not_converted: u64, status_code: StatusCode, hmac_key: &[u8], msg_response_type: u8) {
-    let msg = serialize_error(request_id_not_converted, status_code, hmac_key, msg_response_type);
-    socket.write_all(&msg).await.unwrap();
-}
+// fn serialize_error(request_id_not_converted: u64, status_code: StatusCode, hmac_key: &[u8], msg_response_type: u8) -> Vec<u8> {
+//     let mut msg: Vec<u8> = Vec::new();
+//     msg.extend_from_slice(&MAGIC_NUMBER);
 
-async fn process_connection(mut socket: TcpStream, addr: SocketAddr, sender: UnboundedSender<Uuid>, handle_id: Uuid,  config: Arc<ConnectionHandlerConfig>) {
+//     let padding: [u8; 2] = [0; 2];
+//     msg.extend_from_slice(&padding);
+
+//     msg.push(status_code as u8);
+//     msg.push(msg_response_type);
+
+//     msg.extend_from_slice(&request_id_not_converted.to_be_bytes());    
+
+//     let mac_res = HmacSha256::new_from_slice(hmac_key);
+                
+//         match mac_res {
+//             Err(_) => {return msg},
+//             Ok(mut mac) => {
+//                 mac.update(&msg);
+//                 let tag = mac.finalize().into_bytes();
+
+//                 msg.extend_from_slice(&tag);
+//             },
+//         }
+
+//     msg
+// }
+
+// async fn respond_to_client_if_error(mut socket: TcpStream, request_id_not_converted: u64, status_code: StatusCode, hmac_key: &[u8], msg_response_type: u8) {
+//     let msg = serialize_error(request_id_not_converted, status_code, hmac_key, msg_response_type);
+//     socket.write_all(&msg).await.unwrap();
+// }
+
+async fn process_connection(mut socket: TcpStream, addr: SocketAddr, error_sender: UnboundedSender<Uuid>, handle_id: Uuid,  config: Arc<ConnectionHandlerConfig>) {
     let deserialize_result = deserialize_register_command(&mut socket, &config.hmac_system_key, &config.hmac_client_key).await;
+
+    let (response_msg_sender, mut response_msg_receiver) = unbounded_channel::<OperationSuccess>();
 
     match deserialize_result {
         Err(ref err) if err.kind() == std::io::ErrorKind::InvalidInput => {
@@ -217,7 +248,9 @@ async fn process_connection(mut socket: TcpStream, addr: SocketAddr, sender: Unb
             if !is_sector_idx_valid(sector_idx, config.n_sectors) {
                 // send information about the error
                 if let RegisterCommand::Client(_) = &command {
-                    respond_to_client_if_error(socket, get_request_id_from_client_register_command(&command), StatusCode::InvalidSectorIndex, &config.hmac_client_key, get_msg_type_from_client_register_command(&command)).await;
+                    // respond_to_client_if_error(socket, get_request_id_from_client_register_command(&command), StatusCode::InvalidSectorIndex, &config.hmac_client_key, get_msg_type_from_client_register_command(&command)).await;
+                    let operation_error = get_error_operation_success(command);
+                    let reply = serialize_response(operation_error, StatusCode::InvalidSectorIndex, &config.hmac_client_key);
                 }
             }
             else if !is_hmac_valid {
@@ -228,6 +261,17 @@ async fn process_connection(mut socket: TcpStream, addr: SocketAddr, sender: Unb
             }
             else {
                 // correct message - send to channel
+
+                /*
+                create a closure for sending responses
+                channel to queue messages on the socket
+                no, here I am responsible for serialization, maybe just send here for serialization
+                RegisterCommand, sector_idx, callback -> if from client
+                if connected from another process -> RegisterCommand, sector_idx
+                two separate channels
+
+                if from another process -> send to register client, in order to note which messages have been confirmed
+                 */
             }
         }
     }
