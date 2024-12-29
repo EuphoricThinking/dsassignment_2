@@ -43,9 +43,9 @@ type MessagesToDelegate = (RegisterCommand, Option<ClientResponseSender>);
 type MessagesToSectorsSender = UnboundedSender<MessagesToDelegate>;
 type MessagesToSectorsReceiver = UnboundedSender<MessagesToDelegate>;
 
-type RetransmitionMap = HashMap<Uuid, RegisterCommand>;
+type RetransmitionMap = HashMap<SectorIdx, SystemRegisterCommand>;
 
-type SuccesCallback = Box<
+type SuccessCallback = Box<
 dyn FnOnce(OperationSuccess) -> Pin<Box<dyn Future<Output = ()> + Send>>
     + Send
     + Sync,
@@ -68,6 +68,7 @@ struct ConnectionHandlerConfig {
     // channels to signal the end of client task and possibility of register removal
     // suicide_sender: UnboundedSender<u64>,
     register_client: Arc<ProcessRegisterClient>,
+    self_rank: u8,
 }
 // use hmac::{Hmac, Mac};
 // use sha2::Sha256;
@@ -295,11 +296,7 @@ async fn process_responses_to_clients(mut socket_to_write: OwnedWriteHalf, hmac_
     }
 }
 
-async fn create_a_closure(client_response_sender: ClientResponseSender, suicide_sender: UnboundedSender<u64>, sector_idx: u64, self_process_id: u8, client_request_receiver: Arc<RCommandReceiver>, internal_requests_receiver: Arc<RCommandReceiver>, register_client: Arc<dyn RegisterClient>) ->  Box<
-dyn FnOnce(OperationSuccess) -> Pin<Box<dyn Future<Output = ()> + Send>>
-    + Send
-    + Sync,
-> {
+async fn create_a_closure(client_response_sender: ClientResponseSender, suicide_sender: UnboundedSender<u64>, sector_idx: u64, self_process_id: u8, client_request_receiver: Arc<RCommandReceiver>, internal_requests_receiver: Arc<RCommandReceiver>, register_client: Arc<dyn RegisterClient>) ->  SuccessCallback {
     Box::new(move |success: OperationSuccess| {
         Box::pin(async move {
             client_response_sender.send((success, StatusCode::Ok)).unwrap();
@@ -322,7 +319,7 @@ dyn FnOnce(OperationSuccess) -> Pin<Box<dyn Future<Output = ()> + Send>>
                 };
 
                 /*
-                The process needs to check if the process re
+
                  */
                 register_client.broadcast(Broadcast{cmd: Arc::new(msg)}).await;
             }
@@ -349,6 +346,14 @@ fn is_msg_an_ACK(command: &RegisterCommand) -> bool {
     }
 
     return false;
+}
+
+fn get_sender_rank(command: &RegisterCommand) -> u8 {
+    if let RegisterCommand::System(SystemRegisterCommand{header, ..}) = command {
+        header.process_identifier;
+    }
+
+    0
 }
 
 async fn process_connection(socket: TcpStream, addr: SocketAddr, error_sender: UnboundedSender<Uuid>, handle_id: Uuid,  config: Arc<ConnectionHandlerConfig>) {
@@ -417,8 +422,9 @@ async fn process_connection(socket: TcpStream, addr: SocketAddr, error_sender: U
                            
                             // a previous message is removed from the set of messages to be sent in StubbronLink implementation if we have received an expected response
                             // if is_msg_an_expected_system_response(&command) {
-                            // there is always a message to cancel
-                            if is_msg_an_ACK(&command) {
+                            // if we have received an ack we have sent before (process id might differ, but uuid should be unique)
+                            // double check for unnecessary sending
+                            if is_msg_an_ACK(&command) && (config.self_rank != get_sender_rank(&command)) {
                                 config.register_client.register_response(command.clone());
                             }
                             // }
@@ -491,7 +497,7 @@ pub async fn run_register_process(config: Configuration) {
 
     let register_client = Arc::new(ProcessRegisterClient::new(config.public.tcp_locations.clone(), rcommands_sender.clone()).await);
 
-    let config_for_connections = Arc::new(ConnectionHandlerConfig{hmac_system_key: config.hmac_system_key, hmac_client_key: config.hmac_client_key, n_sectors: config.public.n_sectors, msg_sender: rcommands_sender.clone(), register_client: register_client.clone()});
+    let config_for_connections = Arc::new(ConnectionHandlerConfig{hmac_system_key: config.hmac_system_key, hmac_client_key: config.hmac_client_key, n_sectors: config.public.n_sectors, msg_sender: rcommands_sender.clone(), register_client: register_client.clone(), self_rank: config.public.self_rank});
     tokio::spawn(handle_connections(listener, config_for_connections.clone()));
 
     
@@ -1821,26 +1827,53 @@ struct ProcessRegisterClient {
 impl ProcessRegisterClient{
     fn register_response(&self, msg: RegisterCommand) {
         //clone sender befoer using it
+        // send to the stubbornlink which should handle given process
         unimplemented!()
     }
 
-    fn remove_unnecessary_msg_from_to_be_sent_set(response: RegisterCommand,
-    messages: &mut RetransmitionMap) {
-        // delete messages if either of the processes proceeds
-        if let RegisterCommand::System(SystemRegisterCommand{
-            header,
-            content
-        }) = &response {
-            let op_id = header.msg_ident;
-            let found_entry = messages.get(&op_id);
+    fn is_ack_from_readreturn_with_get_msg_ident(command: &RegisterCommand, messages: &RetransmitionMap, self_rank: u8) -> (bool, Uuid) {
+        if let RegisterCommand::System(SystemRegisterCommand{header, content}) = command {
 
-            if let Some(msg_to_be_resent) = found_entry {
-                if (get_system_command_type_enum(&response) == SystemCommandType::WriteProc) && (get_system_command_type_enum(msg_to_be_resent)  == SystemCommandType::Value) {
-                    messages.remove(&op_id);
+            if self_rank == header.process_identifier {
+                if let SystemRegisterCommandContent::Ack = content {
+                    if header.msg_ident.is_nil() {
+                        // Ack - an arbitrary identifier for ReadReturn
+                        // we have to check now if there is WriteProc as a last message to be sent
+                        let last_command = messages.get(&header.sector_idx);
+
+                        if let Some(msg) = last_command {
+                            let SystemRegisterCommand{header, content} = msg;
+
+                            if let SystemRegisterCommandContent::WriteProc { .. } = content {
+                                // we were the process which finished the request and does not need any further acks
+                                return (true, header.msg_ident);
+                            }
+                        }
+                    }
                 }
             }
         }
+
+        (false, Uuid::nil())
     }
+
+    // fn remove_unnecessary_msg_from_to_be_sent_set(response: RegisterCommand,
+    // messages: &mut RetransmitionMap) {
+    //     // delete messages if either of the processes proceeds
+    //     if let RegisterCommand::System(SystemRegisterCommand{
+    //         header,
+    //         content
+    //     }) = &response {
+    //         let op_id = header.msg_ident;
+    //         let found_entry = messages.get(&op_id);
+
+    //         if let Some(msg_to_be_resent) = found_entry {
+    //             if (get_system_command_type_enum(&response) == SystemCommandType::WriteProc) && (get_system_command_type_enum(msg_to_be_resent)  == SystemCommandType::Value) {
+    //                 messages.remove(&op_id);
+    //             }
+    //         }
+    //     }
+    // }
 
     async fn handle_process_connection(tcp_location: (String, u16), mut ack_receiver: RCommandReceiver, mut msg_to_send_receiver: RCommandReceiver, self_rank: u8, self_msg_sender: MessagesToSectorsSender) {
         // todo add_broadcast
@@ -1858,6 +1891,14 @@ impl ProcessRegisterClient{
                 Ok(stream) => {
                     tokio::select! {
                         msg_to_send = msg_to_send_receiver.recv() => {
+                            // TODO acks by uuid
+                            match msg_to_send {
+                                None => {},
+                                Some(command) => {
+                                    let (is_readreturn, msg_ident) = ProcessRegisterClient::is_ack_from_readreturn_with_get_msg_ident(&command, &messages_to_be_resent, self_rank);
+                                }
+                            }
+                            
 
                         }
                         ack_msg = ack_receiver.recv() => {
