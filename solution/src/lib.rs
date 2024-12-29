@@ -6,6 +6,7 @@ use bincode::ErrorKind;
 pub use register_client_public::*;
 pub use sectors_manager_public::*;
 use tokio::io::AsyncWriteExt;
+use tokio::net::tcp::OwnedWriteHalf;
 use tokio::task::JoinHandle;
 pub use transfer_public::*;
 
@@ -15,6 +16,9 @@ use tokio::net::{TcpListener, TcpStream};
 use core::net::SocketAddr;
 use tokio::sync::mpsc::{self, unbounded_channel, UnboundedReceiver, UnboundedSender};
 use std::sync::Arc;
+use std::pin::Pin;
+use std::future::Future;
+use std::marker::Send;
 
 use uuid::Uuid;
 
@@ -24,6 +28,8 @@ type HmacSha256 = Hmac<Sha256>;
 
 type channel_map<T> = HashMap<SectorIdx, (UnboundedSender<T>, UnboundedReceiver<T>)>;
 type ConnectionMap = HashMap<Uuid, JoinHandle<()>>;
+
+type ClientResponseSender = UnboundedSender<(OperationSuccess, StatusCode)>;
 
 struct ConnectionData {
     host: String,
@@ -226,52 +232,92 @@ fn get_error_operation_success(rg_command: RegisterCommand) -> OperationSuccess 
 //     let msg = serialize_error(request_id_not_converted, status_code, hmac_key, msg_response_type);
 //     socket.write_all(&msg).await.unwrap();
 // }
+async fn process_responses_to_clients(mut socket_to_write: OwnedWriteHalf, hmac_key: &[u8], mut client_responses_channel: ClientResponseSender, error_sender: UnboundedSender<Uuid>, handle_id: Uuid) {
+    loop {
+        let msg = client_responses_channel.recv().await;
+
+        match msg {
+            None => {
+                error_sender.send(handle_id);
+            }
+            Some((operation_success, status_code)) => {
+                let reply = serialize_response(operation_success, status_code, hmac_key);
+
+                socket_to_write.write_all(&reply).await;
+            }
+        }
+    }
+}
+
+async fn create_a_closure(msg_sender: ClientResponseSender) ->  Box<
+dyn FnOnce(OperationSuccess) -> Pin<Box<dyn Future<Output = ()> + Send>>
+    + Send
+    + Sync,
+> {
+    Box::new(move |success: OperationSuccess| {
+        Box::pin(async move {
+            msg_sender.send((success, StatusCode::Ok));
+        })
+    })
+
+    // unimplemented!()
+}
 
 async fn process_connection(mut socket: TcpStream, addr: SocketAddr, error_sender: UnboundedSender<Uuid>, handle_id: Uuid,  config: Arc<ConnectionHandlerConfig>) {
-    let deserialize_result = deserialize_register_command(&mut socket, &config.hmac_system_key, &config.hmac_client_key).await;
 
-    let (response_msg_sender, mut response_msg_receiver) = unbounded_channel::<OperationSuccess>();
+    let (response_msg_sender, mut response_msg_receiver) = unbounded_channel::<(OperationSuccess, StatusCode)>();
 
-    match deserialize_result {
-        Err(ref err) if err.kind() == std::io::ErrorKind::InvalidInput => {
-            // TODO send message to client, serialized with error msg
-        },
-        Err(ref err) if err.kind() == std::io::ErrorKind::Other => {
+    // tcp socket for accepting responses and sending responses
+    let (requests_from_clients_socket, response_to_client_socket) = socket.into_split();
 
-        },
-        Err(_) => {
-            // error in connection - try to send and send as inactive
-        },
-        Ok((command, is_hmac_valid)) => {
-            let sector_idx = get_sector_idx_from_command(&command);
+    tokio::spawn(process_responses_to_clients(response_to_client_socket, &config.hmac_client_key.clone() , response_msg_receiver, error_sender, handle_id));
 
-            if !is_sector_idx_valid(sector_idx, config.n_sectors) {
-                // send information about the error
-                if let RegisterCommand::Client(_) = &command {
-                    // respond_to_client_if_error(socket, get_request_id_from_client_register_command(&command), StatusCode::InvalidSectorIndex, &config.hmac_client_key, get_msg_type_from_client_register_command(&command)).await;
-                    let operation_error = get_error_operation_success(command);
-                    let reply = serialize_response(operation_error, StatusCode::InvalidSectorIndex, &config.hmac_client_key);
+    loop {
+        let deserialize_result = deserialize_register_command(&mut socket, &config.hmac_system_key, &config.hmac_client_key).await;
+
+        match deserialize_result {
+            Err(ref err) if err.kind() == std::io::ErrorKind::InvalidInput => {
+                // TODO send message to client, serialized with error msg
+            },
+            Err(ref err) if err.kind() == std::io::ErrorKind::Other => {
+
+            },
+            Err(_) => {
+                // error in connection - try to send and send as inactive
+            },
+            Ok((command, is_hmac_valid)) => {
+                let sector_idx = get_sector_idx_from_command(&command);
+
+                if !is_sector_idx_valid(sector_idx, config.n_sectors) {
+                    // send information about the error
+                    if let RegisterCommand::Client(_) = &command {
+                        // respond_to_client_if_error(socket, get_request_id_from_client_register_command(&command), StatusCode::InvalidSectorIndex, &config.hmac_client_key, get_msg_type_from_client_register_command(&command)).await;
+                        let operation_error = get_error_operation_success(command);
+                        // let reply = serialize_response(operation_error, StatusCode::InvalidSectorIndex, &config.hmac_client_key);
+                        response_msg_sender.send((operation_error, StatusCode::InvalidSectorIndex));
+                    }
                 }
-            }
-            else if !is_hmac_valid {
-                // send information about error
-                if let RegisterCommand::Client(_) = &command {
-                    respond_to_client_if_error(socket, get_request_id_from_client_register_command(&command), StatusCode::AuthFailure, &config.hmac_client_key, get_msg_type_from_client_register_command(&command)).await;
+                else if !is_hmac_valid {
+                    // send information about error
+                    if let RegisterCommand::Client(_) = &command {
+                        let operation_error = get_error_operation_success(command);
+                        response_msg_sender.send((operation_error, StatusCode::AuthFailure));
+                    }
                 }
-            }
-            else {
-                // correct message - send to channel
+                else {
+                    // correct message - send to channel
 
-                /*
-                create a closure for sending responses
-                channel to queue messages on the socket
-                no, here I am responsible for serialization, maybe just send here for serialization
-                RegisterCommand, sector_idx, callback -> if from client
-                if connected from another process -> RegisterCommand, sector_idx
-                two separate channels
+                    /*
+                    create a closure for sending responses
+                    channel to queue messages on the socket
+                    no, here I am responsible for serialization, maybe just send here for serialization
+                    RegisterCommand, sector_idx, callback -> if from client
+                    if connected from another process -> RegisterCommand, sector_idx
+                    two separate channels
 
-                if from another process -> send to register client, in order to note which messages have been confirmed
-                 */
+                    if from another process -> send to register client, in order to note which messages have been confirmed
+                    */
+                }
             }
         }
     }
