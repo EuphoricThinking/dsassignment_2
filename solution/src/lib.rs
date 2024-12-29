@@ -44,6 +44,7 @@ type MessagesToSectorsSender = UnboundedSender<MessagesToDelegate>;
 type MessagesToSectorsReceiver = UnboundedSender<MessagesToDelegate>;
 
 type RetransmitionMap = HashMap<SectorIdx, SystemRegisterCommand>;
+type AckRetransmitMap = HashMap<Uuid, RegisterCommand>;
 
 type SuccessCallback = Box<
 dyn FnOnce(OperationSuccess) -> Pin<Box<dyn Future<Output = ()> + Send>>
@@ -356,6 +357,14 @@ fn get_sender_rank(command: &RegisterCommand) -> u8 {
     0
 }
 
+fn get_msg_uuid_if_systemcommand(command: &RegisterCommand) -> Uuid {
+    if let RegisterCommand::System(SystemRegisterCommand{header, ..}) = command {
+        return header.msg_ident;
+    }
+
+    Uuid::nil()
+}
+
 async fn process_connection(socket: TcpStream, addr: SocketAddr, error_sender: UnboundedSender<Uuid>, handle_id: Uuid,  config: Arc<ConnectionHandlerConfig>) {
 
     let (response_msg_sender, response_msg_receiver) = unbounded_channel::<(OperationSuccess, StatusCode)>();
@@ -424,13 +433,15 @@ async fn process_connection(socket: TcpStream, addr: SocketAddr, error_sender: U
                             // if is_msg_an_expected_system_response(&command) {
                             // if we have received an ack we have sent before (process id might differ, but uuid should be unique)
                             // double check for unnecessary sending
-                            if is_msg_an_ACK(&command) && (config.self_rank != get_sender_rank(&command)) {
+                            if is_msg_an_ACK(&command) {//&& (config.self_rank != get_sender_rank(&command)) {
                                 config.register_client.register_response(command.clone());
                             }
                             // }
+                            // the ACK message should be discarded if op_id != msg_ident
 
-                            // send a command to the process
                             config.msg_sender.send((command, None)).unwrap();
+                            
+                            // send a command to the process
                             
                         }
                     }
@@ -500,7 +511,7 @@ pub async fn run_register_process(config: Configuration) {
     let config_for_connections = Arc::new(ConnectionHandlerConfig{hmac_system_key: config.hmac_system_key, hmac_client_key: config.hmac_client_key, n_sectors: config.public.n_sectors, msg_sender: rcommands_sender.clone(), register_client: register_client.clone(), self_rank: config.public.self_rank});
     tokio::spawn(handle_connections(listener, config_for_connections.clone()));
 
-    
+    // TODO IF ACK IS NOT MY ID -> SKIP
     
     unimplemented!()
 }
@@ -1893,8 +1904,11 @@ impl ProcessRegisterClient{
         retransmition_tick.tick().await;
 
         let mut messages_to_be_resent: RetransmitionMap = HashMap::new();
+        let mut acks_to_be_resent: AckRetransmitMap = HashMap::new();
 
         let mut connection_error_to_be_resent: Vec<RegisterCommand> = Vec::new();
+
+
 
         loop {
             let tcp_connect_result = TcpStream::connect(&tcp_location).await;
@@ -1912,6 +1926,8 @@ impl ProcessRegisterClient{
                                     break; // we need to reconnect probably
                                 }
                             }
+
+                            connection_error_to_be_resent = Vec::new();
                         }
 
                         tokio::select! {
@@ -1919,7 +1935,7 @@ impl ProcessRegisterClient{
                                 // TODO acks by uuid
                                 match msg_to_send {
                                     None => {},
-                                    Some(mut command) => {
+                                    Some(command) => {
                                         let (is_readreturn, msg_ident) = ProcessRegisterClient::is_ack_from_readreturn_with_get_msg_ident(&command, &messages_to_be_resent, self_rank);
 
                                         if is_readreturn {
@@ -1936,14 +1952,28 @@ impl ProcessRegisterClient{
                                                 Ok(_) => {},
                                             }
                                         }
+                                        else {
+                                            // send simple message
+                                        }
                                     }
                                 }
                                 
 
                             }
+                            
                             ack_msg = ack_receiver.recv() => {
-
+                                // I have received an ack about finished readreturn
+                                match ack_msg {
+                                    None => {},
+                                    Some(ack) => {
+                                        let msg_uuid = get_msg_uuid_if_systemcommand(&ack);
+                                        // remove the message which is not needed to be sent
+                                        acks_to_be_resent.remove(&msg_uuid);
+                                    }
+                                }
+                                
                             }
+
                             _ = retransmition_tick.tick() => {
 
                             }
