@@ -60,6 +60,7 @@ struct ConnectionHandlerConfig {
     msg_sender: MessagesToSectorsSender,
     // channels to signal the end of client task and possibility of register removal
     suicide_sender: UnboundedSender<u64>,
+    register_client: Arc<ProcessRegisterClient>,
 }
 // use hmac::{Hmac, Mac};
 // use sha2::Sha256;
@@ -283,6 +284,21 @@ dyn FnOnce(OperationSuccess) -> Pin<Box<dyn Future<Output = ()> + Send>>
     // unimplemented!()
 }
 
+fn is_msg_an_expected_system_response(command: &RegisterCommand) -> bool {
+    if let RegisterCommand::System(SystemRegisterCommand{header, content}) = &command {
+        // expected response after ReadProc
+        if let SystemRegisterCommandContent::Value{..} = &content {
+            return true;
+        }
+        // expected response after WriteProc
+        else if let SystemRegisterCommandContent::Ack = content{
+            return true;
+        }
+    }
+
+    return false;
+}
+
 async fn process_connection(socket: TcpStream, addr: SocketAddr, error_sender: UnboundedSender<Uuid>, handle_id: Uuid,  config: Arc<ConnectionHandlerConfig>) {
 
     let (response_msg_sender, response_msg_receiver) = unbounded_channel::<(OperationSuccess, StatusCode)>();
@@ -345,10 +361,16 @@ async fn process_connection(socket: TcpStream, addr: SocketAddr, error_sender: U
                         config.msg_sender.send((command, Some(closure))).unwrap();
                     }
                     else {
-                        if let RegisterCommand::System(SystemRegisterCommand{header, content}) = &command {
-                            // send command to process
+                        if let RegisterCommand::System(_) = &command {
+                           
+                            // a previous message is removed from the set of messages to be sent in StubbronLink implementation if we have received an expected response
+                            if is_msg_an_expected_system_response(&command) {
+                                config.register_client.register_response(command.clone());
+                            }
+
+                            // send a command to the process
                             config.msg_sender.send((command, None)).unwrap();
-                            // TODO send to registerClient if expected response
+                            
                         }
                     }
                 }
@@ -412,7 +434,9 @@ pub async fn run_register_process(config: Configuration) {
     let sectors_written_after_recovery = get_sectors_written_after_recovery(&root_path);
     // let connection_tasks: HashMap<(String, u16), JoinHandle<()>> = HashMap::new();
 
-    let config_for_connections = Arc::new(ConnectionHandlerConfig{hmac_system_key: config.hmac_system_key, hmac_client_key: config.hmac_client_key, n_sectors: config.public.n_sectors, msg_sender: rcommands_sender.clone(), suicide_sender: suicidal_sender.clone()});
+    let register_client = Arc::new(ProcessRegisterClient::new());
+
+    let config_for_connections = Arc::new(ConnectionHandlerConfig{hmac_system_key: config.hmac_system_key, hmac_client_key: config.hmac_client_key, n_sectors: config.public.n_sectors, msg_sender: rcommands_sender.clone(), suicide_sender: suicidal_sender.clone(), register_client: register_client.clone()});
     tokio::spawn(handle_connections(listener, config_for_connections.clone()));
 
     
