@@ -33,6 +33,17 @@ type ClientResponseSender = UnboundedSender<(OperationSuccess, StatusCode)>;
 type ClientResponseReceiver = UnboundedReceiver<(OperationSuccess, StatusCode)>;
 type RCommandSender = UnboundedSender<RegisterCommand>;
 
+type MessagesToDelegate = (RegisterCommand, Option<SuccesCallback>);
+
+type MessagesToSectorsSender = UnboundedSender<MessagesToDelegate>;
+type MessagesToSectorsReceiver = UnboundedSender<MessagesToDelegate>;
+
+type SuccesCallback = Box<
+dyn FnOnce(OperationSuccess) -> Pin<Box<dyn Future<Output = ()> + Send>>
+    + Send
+    + Sync,
+>;
+
 struct ConnectionData {
     host: String,
     addr: u16,
@@ -46,7 +57,7 @@ struct ConnectionHandlerConfig {
     hmac_client_key: [u8; 32],
     n_sectors: u64,
     // messages to be processed by registers
-    msg_sender: UnboundedSender<(RegisterCommand, SectorIdx)>,
+    msg_sender: MessagesToSectorsSender,
     // channels to signal the end of client task and possibility of register removal
     suicide_sender: UnboundedSender<u64>,
 }
@@ -328,8 +339,17 @@ async fn process_connection(socket: TcpStream, addr: SocketAddr, error_sender: U
 
                     if from another process -> send to register client, in order to note which messages have been confirmed
                     */
-                    if let RegisterCommand::Client(ClientRegisterCommand{header, content}) = command {
-                        let closure = create_a_closure(response_msg_sender.clone(), suicide_sender, sector_idx)
+                    if let RegisterCommand::Client(ClientRegisterCommand{header, content}) = &command {
+                        let closure = create_a_closure(response_msg_sender.clone(), config.suicide_sender.clone(), header.sector_idx).await;
+
+                        config.msg_sender.send((command, Some(closure))).unwrap();
+                    }
+                    else {
+                        if let RegisterCommand::System(SystemRegisterCommand{header, content}) = &command {
+                            // send command to process
+                            config.msg_sender.send((command, None)).unwrap();
+                            // TODO send to registerClient if expected response
+                        }
                     }
                 }
             }
@@ -384,7 +404,7 @@ pub async fn run_register_process(config: Configuration) {
     // registers inform the process that they are probably not needed
     let (suicidal_sender, mut suicidal_receiver) = unbounded_channel::<SectorIdx>();
     // messages from clients, other processes and internal
-    let (rcommands_sender, mut rcommands_receiver) = unbounded_channel::<(RegisterCommand, SectorIdx)>();
+    let (rcommands_sender, mut rcommands_receiver) = unbounded_channel::<MessagesToDelegate>();
 
     let root_path = config.public.storage_dir.clone();
     let sector_manager = build_sectors_manager(config.public.storage_dir).await;
@@ -1714,7 +1734,11 @@ struct ProcessRegisterClient {
 
 impl ProcessRegisterClient{
     fn register_response(&self, msg: RegisterCommand) {
+        unimplemented!()
+    }
 
+    pub fn new() -> Self {
+        unimplemented!()
     }
 }
 pub mod register_client_public {
