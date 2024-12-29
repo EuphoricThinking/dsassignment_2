@@ -87,6 +87,12 @@ fn get_own_number_in_tcp_ports(self_rank: u8, tcp_locations: &Vec<(String, u16)>
     port_data
 }
 
+fn get_process_idx_in_vec(process_rank: u8) -> usize {
+    let idx = process_rank.saturating_sub(1);
+
+    return idx as usize;
+}
+
 fn get_sector_idx_from_filename(sector_path: &PathBuf) -> u64 {
     if let Some(fname) = sector_path.file_name() {
         if let Some(str_name) = fname.to_str() {
@@ -1839,7 +1845,14 @@ impl ProcessRegisterClient{
     fn register_response(&self, msg: RegisterCommand) {
         //clone sender befoer using it
         // send to the stubbornlink which should handle given process
-        unimplemented!()
+        // record repeated acknowledgement in order to stop sendin unnecessary acks for already completed action
+        // if this process sent an ACK, the sending process performed the communication with the client
+        let process_rank = get_sender_rank(&msg);
+        if process_rank != 0 {
+            let ack_channel = self.ack_channels[get_process_idx_in_vec(process_rank)].clone();
+            ack_channel.send(msg);
+        }
+        // unimplemented!()
     }
 
     fn is_ack_from_readreturn_with_get_msg_ident(command: &RegisterCommand, messages: &RetransmitionMap, self_rank: u8) -> (bool, Uuid) {
@@ -1975,7 +1988,7 @@ impl ProcessRegisterClient{
                                             // if it is internal message -
                                             // return to the main message channel
                                             // TODO prepare a separate task,
-                                            // since taskhandlers are jus ttask handlers in the vector
+                                            // since taskhandlers are just ttask handlers in the vector
                                             if ProcessRegisterClient::is_message_to_itself(self_rank, &command) {
                                                 self_msg_sender.send((command, None));
                                             }
@@ -2081,6 +2094,18 @@ impl ProcessRegisterClient{
         unimplemented!()
     }
 }
+
+#[async_trait::async_trait]
+impl RegisterClient for ProcessRegisterClient {
+    async fn send(&self, msg: register_client_public::Send) {
+        unimplemented!()
+    }
+
+    async fn broadcast(&self, msg: Broadcast) {
+        unimplemented!()
+    }
+}
+
 pub mod register_client_public {
     use crate::SystemRegisterCommand;
     use std::sync::Arc;
