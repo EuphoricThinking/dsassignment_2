@@ -1748,12 +1748,18 @@ pub mod transfer_public {
 }
 
 struct ProcessRegisterClient {
+    // indices in vectors indicate the corresponding process
     tcp_locations: Vec<(String, u16)>,
     // messages to be sent to the processes
     process_channels: Vec<RCommandSender>,
     // if connection receives a message regarding a particular register
     ack_channels: Vec<RCommandSender>,
+    // task implementing StubbornLinks for connection management
+    stubborn_links: Vec<JoinHandle<()>>,
+    // for redirection of messages sent to itself
     self_rank: u8,
+    // channel for messages to itself
+    self_msg_sender: MessagesToSectorsSender,
 }
 
 impl ProcessRegisterClient{
