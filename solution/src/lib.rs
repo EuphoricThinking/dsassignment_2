@@ -1857,6 +1857,17 @@ impl ProcessRegisterClient{
         (false, Uuid::nil())
     }
 
+    fn get_command_with_updated_msg_ident(command: RegisterCommand, msg_ident: Uuid) -> RegisterCommand {
+        if let RegisterCommand::System(SystemRegisterCommand{header, ..}) = command {
+            return RegisterCommand::System(SystemRegisterCommand{
+                header: SystemCommandHeader { process_identifier: header.process_identifier, msg_ident: msg_ident, sector_idx: header.sector_idx },
+                content: SystemRegisterCommandContent::Ack,
+            });
+        }
+
+        command
+    }
+
     // fn remove_unnecessary_msg_from_to_be_sent_set(response: RegisterCommand,
     // messages: &mut RetransmitionMap) {
     //     // delete messages if either of the processes proceeds
@@ -1875,7 +1886,7 @@ impl ProcessRegisterClient{
     //     }
     // }
 
-    async fn handle_process_connection(tcp_location: (String, u16), mut ack_receiver: RCommandReceiver, mut msg_to_send_receiver: RCommandReceiver, self_rank: u8, self_msg_sender: MessagesToSectorsSender) {
+    async fn handle_process_connection(tcp_location: (String, u16), mut ack_receiver: RCommandReceiver, mut msg_to_send_receiver: RCommandReceiver, self_rank: u8, self_msg_sender: MessagesToSectorsSender, hmac_system_key: &[u8]) {
         // todo add_broadcast
 
         let mut retransmition_tick = time::interval(Duration::from_millis(RETRANSMITION_DELAY));
@@ -1883,31 +1894,61 @@ impl ProcessRegisterClient{
 
         let mut messages_to_be_resent: RetransmitionMap = HashMap::new();
 
+        let mut connection_error_to_be_resent: Vec<RegisterCommand> = Vec::new();
+
         loop {
             let tcp_connect_result = TcpStream::connect(&tcp_location).await;
 
             match tcp_connect_result {
                 Err(_) => continue,
-                Ok(stream) => {
-                    tokio::select! {
-                        msg_to_send = msg_to_send_receiver.recv() => {
-                            // TODO acks by uuid
-                            match msg_to_send {
-                                None => {},
-                                Some(command) => {
-                                    let (is_readreturn, msg_ident) = ProcessRegisterClient::is_ack_from_readreturn_with_get_msg_ident(&command, &messages_to_be_resent, self_rank);
+                Ok(mut stream) => {
+                    loop {
+                        // we reconnected after losing the connection
+                        if !connection_error_to_be_resent.is_empty() {
+                            for msg in &connection_error_to_be_resent{
+                                let res = serialize_register_command(msg, &mut stream, hmac_system_key).await;
+
+                                if res.is_err() {
+                                    break; // we need to reconnect probably
                                 }
                             }
-                            
-
-                        }
-                        ack_msg = ack_receiver.recv() => {
-
-                        }
-                        _ = retransmition_tick.tick() => {
-
                         }
 
+                        tokio::select! {
+                            msg_to_send = msg_to_send_receiver.recv() => {
+                                // TODO acks by uuid
+                                match msg_to_send {
+                                    None => {},
+                                    Some(mut command) => {
+                                        let (is_readreturn, msg_ident) = ProcessRegisterClient::is_ack_from_readreturn_with_get_msg_ident(&command, &messages_to_be_resent, self_rank);
+
+                                        if is_readreturn {
+                                            let updated_command = ProcessRegisterClient::get_command_with_updated_msg_ident(command, msg_ident);
+                                            let res = serialize_register_command(&updated_command, &mut stream, hmac_system_key).await;
+
+                                            match res {
+                                                Err(_) => {
+                                                    // we need to resenf
+                                                    connection_error_to_be_resent.push(updated_command);
+                                                    break;
+                                                }
+
+                                                Ok(_) => {},
+                                            }
+                                        }
+                                    }
+                                }
+                                
+
+                            }
+                            ack_msg = ack_receiver.recv() => {
+
+                            }
+                            _ = retransmition_tick.tick() => {
+
+                            }
+
+                        }
                     }
                 }
             }
