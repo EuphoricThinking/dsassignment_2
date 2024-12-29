@@ -26,6 +26,8 @@ pub static CONTENT_SIZE: usize = 4096;
 pub static READ_RESPONSE_STATUS_CODE: u8 = 0x41;
 pub static WRITE_RESPONSE_STATUS_CODE: u8 = 0x42;
 
+pub static RETRANSMITION_DELAY: u64 = 500;
+
 pub struct Configuration {
     /// Hmac key to verify and sign internal requests.
     pub hmac_system_key: [u8; 64],
@@ -105,6 +107,15 @@ pub enum SystemRegisterCommandContent {
         data_to_write: SectorVec,
     },
     Ack,
+}
+
+#[derive (Debug, Clone, PartialEq, Eq)]
+pub enum SystemCommandType {
+    ReadProc,
+    Value,
+    WriteProc,
+    Ack,
+    Other
 }
 
 #[derive(Debug, Clone)]
