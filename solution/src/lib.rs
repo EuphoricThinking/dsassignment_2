@@ -512,12 +512,13 @@ pub async fn run_register_process(config: Configuration) {
     let sectors_written_after_recovery = get_sectors_written_after_recovery(&root_path);
     // let connection_tasks: HashMap<(String, u16), JoinHandle<()>> = HashMap::new();
 
-    let register_client = Arc::new(ProcessRegisterClient::new(config.public.tcp_locations.clone(), rcommands_sender.clone()).await);
+    let register_client = Arc::new(ProcessRegisterClient::new(config.public.tcp_locations.clone(), rcommands_sender.clone(),
+    config.public.self_rank, config.hmac_system_key.to_vec().clone()).await);
 
     let config_for_connections = Arc::new(ConnectionHandlerConfig{hmac_system_key: config.hmac_system_key, hmac_client_key: config.hmac_client_key, n_sectors: config.public.n_sectors, msg_sender: rcommands_sender.clone(), register_client: register_client.clone(), self_rank: config.public.self_rank});
+    
     tokio::spawn(handle_connections(listener, config_for_connections.clone()));
 
-    // TODO IF ACK IS NOT MY ID -> SKIP
     
     unimplemented!()
 }
