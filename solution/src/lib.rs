@@ -43,7 +43,7 @@ type MessagesToDelegate = (RegisterCommand, Option<ClientResponseSender>);
 type MessagesToSectorsSender = UnboundedSender<MessagesToDelegate>;
 type MessagesToSectorsReceiver = UnboundedSender<MessagesToDelegate>;
 
-type RetransmitionMap = HashMap<SectorIdx, SystemRegisterCommand>;
+type RetransmitionMap = HashMap<SectorIdx, RegisterCommand>;
 type AckRetransmitMap = HashMap<Uuid, RegisterCommand>;
 
 type SuccessCallback = Box<
@@ -320,7 +320,7 @@ async fn create_a_closure(client_response_sender: ClientResponseSender, suicide_
                 };
 
                 /*
-
+                In this implementation, the messages are broadcasted using the same channel, which ensures that when the current register sends its message at this moment, any later message will be following the broadcasted now message
                  */
                 register_client.broadcast(Broadcast{cmd: Arc::new(msg)}).await;
             }
@@ -1849,15 +1849,16 @@ impl ProcessRegisterClient{
                 if let SystemRegisterCommandContent::Ack = content {
                     if header.msg_ident.is_nil() {
                         // Ack - an arbitrary identifier for ReadReturn
-                        // we have to check now if there is WriteProc as a last message to be sent
+                        // we have to check now if there is WriteProc as the last message to be sent from the register which has finished (as assigned to sectoridx)
                         let last_command = messages.get(&header.sector_idx);
 
                         if let Some(msg) = last_command {
-                            let SystemRegisterCommand{header, content} = msg;
+                            if let RegisterCommand::System(SystemRegisterCommand{header, content}) = msg {
 
-                            if let SystemRegisterCommandContent::WriteProc { .. } = content {
-                                // we were the process which finished the request and does not need any further acks
-                                return (true, header.msg_ident);
+                                if let SystemRegisterCommandContent::WriteProc { .. } = content {
+                                    // we were the process which finished the request and does not need any further acks
+                                    return (true, header.msg_ident);
+                                }
                             }
                         }
                     }
@@ -1906,7 +1907,7 @@ impl ProcessRegisterClient{
         let mut messages_to_be_resent: RetransmitionMap = HashMap::new();
         let mut acks_to_be_resent: AckRetransmitMap = HashMap::new();
 
-        let mut connection_error_to_be_resent: Vec<RegisterCommand> = Vec::new();
+        // let mut connection_error_to_be_resent: Vec<RegisterCommand> = Vec::new();
 
 
 
@@ -1918,17 +1919,17 @@ impl ProcessRegisterClient{
                 Ok(mut stream) => {
                     loop {
                         // we reconnected after losing the connection
-                        if !connection_error_to_be_resent.is_empty() {
-                            for msg in &connection_error_to_be_resent{
-                                let res = serialize_register_command(msg, &mut stream, hmac_system_key).await;
+                        // if !connection_error_to_be_resent.is_empty() {
+                        //     for msg in &connection_error_to_be_resent{
+                        //         let res = serialize_register_command(msg, &mut stream, hmac_system_key).await;
 
-                                if res.is_err() {
-                                    break; // we need to reconnect probably
-                                }
-                            }
+                        //         if res.is_err() {
+                        //             break; // we need to reconnect probably
+                        //         }
+                        //     }
 
-                            connection_error_to_be_resent = Vec::new();
-                        }
+                        //     connection_error_to_be_resent = Vec::new();
+                        // }
 
                         tokio::select! {
                             msg_to_send = msg_to_send_receiver.recv() => {
@@ -1936,16 +1937,19 @@ impl ProcessRegisterClient{
                                 match msg_to_send {
                                     None => {},
                                     Some(command) => {
+                                        // we need to retrieve op_id
                                         let (is_readreturn, msg_ident) = ProcessRegisterClient::is_ack_from_readreturn_with_get_msg_ident(&command, &messages_to_be_resent, self_rank);
 
                                         if is_readreturn {
                                             let updated_command = ProcessRegisterClient::get_command_with_updated_msg_ident(command, msg_ident);
+                                            acks_to_be_resent.insert(msg_ident, updated_command);
+
                                             let res = serialize_register_command(&updated_command, &mut stream, hmac_system_key).await;
 
                                             match res {
                                                 Err(_) => {
-                                                    // we need to resenf
-                                                    connection_error_to_be_resent.push(updated_command);
+                                                    // we need to resend
+                                                    // connection_error_to_be_resent.push(updated_command);
                                                     break;
                                                 }
 
@@ -1953,14 +1957,30 @@ impl ProcessRegisterClient{
                                             }
                                         }
                                         else {
-                                            // send simple message
+                                            // just send a message
+
+                                            /*
+                                            if an entry for a given sector idx already existed, its value is updated, therefore progressing algorithm erases old entries for a given sector
+                                            
+                                             */
+                                            messages_to_be_resent.insert(get_sector_idx_from_command(&command), command.clone());
+                                            let res = serialize_register_command(&command, &mut stream, hmac_system_key).await;
+
+                                            match res {
+                                                Err(_) => {
+                                                    // error in sending, probably reconnection needed
+                                                    // exiting inner loop in order to connect to the socket in the outer loop
+                                                    break;
+                                                },
+                                                Ok(_) => {}
+                                            }
                                         }
                                     }
                                 }
                                 
 
                             }
-                            
+
                             ack_msg = ack_receiver.recv() => {
                                 // I have received an ack about finished readreturn
                                 match ack_msg {
