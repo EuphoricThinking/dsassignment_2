@@ -1972,11 +1972,15 @@ impl ProcessRegisterClient{
                                         }
                                         else {
                                             // just send a message
-                                            if ProcessRegisterClient::is_message_to_itself(&command, self_rank) {
-
+                                            // if it is internal message -
+                                            // return to the main message channel
+                                            // TODO prepare a separate task,
+                                            // since taskhandlers are jus ttask handlers in the vector
+                                            if ProcessRegisterClient::is_message_to_itself(self_rank, &command) {
+                                                self_msg_sender.send((command, None));
                                             }
                                             else {
-
+                                                // if it is external message - 
                                                 if is_msg_an_ACK(&command) {
                                                     acks_to_be_resent.insert(get_msg_uuid_if_systemcommand(&command), command.clone());
                                                 }
