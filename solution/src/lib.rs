@@ -10,6 +10,7 @@ use tokio::net::tcp::OwnedWriteHalf;
 use tokio::task::JoinHandle;
 pub use transfer_public::*;
 
+use std::clone;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -515,8 +516,12 @@ pub async fn run_register_process(config: Configuration) {
     let register_client = Arc::new(ProcessRegisterClient::new(config.public.tcp_locations.clone(), rcommands_sender.clone(),
     config.public.self_rank, config.hmac_system_key.to_vec().clone()).await);
 
+    // let sectors_manager = build_sectors_manager(config.public.storage_dir).await;
+    // TODO remove
+    let register_TEST = build_atomic_register(config.public.self_rank, 0, register_client.clone(), sector_manager, config.public.tcp_locations.len() as u8);
+
     let config_for_connections = Arc::new(ConnectionHandlerConfig{hmac_system_key: config.hmac_system_key, hmac_client_key: config.hmac_client_key, n_sectors: config.public.n_sectors, msg_sender: rcommands_sender.clone(), register_client: register_client.clone(), self_rank: config.public.self_rank});
-    
+
     tokio::spawn(handle_connections(listener, config_for_connections.clone()));
 
     
@@ -2118,6 +2123,10 @@ impl RegisterClient for ProcessRegisterClient {
 
         // TODO separate channel for broadcast?
          */
+        for sending_channel in self.messages_to_processes.clone().iter() {
+            let cloned_channel = sending_channel.clone();
+            cloned_channel.send(msg.cmd);
+        }
         unimplemented!()
     }
 }
