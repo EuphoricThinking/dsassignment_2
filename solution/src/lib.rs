@@ -2110,6 +2110,13 @@ impl RegisterClient for ProcessRegisterClient {
     }
 
     async fn broadcast(&self, msg: Broadcast) {
+        /*
+        Thre exists a tokio broadcast channel
+        However, it might panic in case of excessive message number (usize::MAX / 2),
+        therefore simple unbounded channel is used
+
+        // TODO separate channel for broadcast?
+         */
         unimplemented!()
     }
 }
