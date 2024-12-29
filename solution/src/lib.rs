@@ -1827,7 +1827,7 @@ pub mod transfer_public {
 
 struct ProcessRegisterClient {
     // indices in vectors indicate the corresponding process
-    tcp_locations: Arc<Vec<(String, u16)>>,
+    // tcp_locations: Arc<Vec<(String, u16)>>,
     // messages to be sent to the processes
     messages_to_processes: Arc<Vec<RCommandSender>>,
     // if connection receives a message regarding a particular register
@@ -1921,7 +1921,7 @@ impl ProcessRegisterClient{
     //     }
     // }
 
-    async fn handle_process_connection(tcp_location: (String, u16), mut ack_receiver: RCommandReceiver, mut msg_to_send_receiver: RCommandReceiver, self_rank: u8, self_msg_sender: MessagesToSectorsSender, hmac_system_key: &[u8]) {
+    async fn handle_process_connection(tcp_location: (String, u16), mut ack_receiver: RCommandReceiver, mut msg_to_send_receiver: RCommandReceiver, self_rank: u8, self_msg_sender: MessagesToSectorsSender, hmac_system_key: Vec<u8>) {
         // todo add_broadcast
 
         let mut retransmition_tick = time::interval(Duration::from_millis(RETRANSMITION_DELAY));
@@ -1971,7 +1971,7 @@ impl ProcessRegisterClient{
                                             // readreturn checks also for write_proc
                                             messages_to_be_resent.remove(&get_sector_idx_from_command(&updated_command));
 
-                                            let res = serialize_register_command(&updated_command, &mut stream, hmac_system_key).await;
+                                            let res = serialize_register_command(&updated_command, &mut stream, &hmac_system_key).await;
 
                                             match res {
                                                 Err(_) => {
@@ -1990,7 +1990,7 @@ impl ProcessRegisterClient{
                                             // TODO prepare a separate task,
                                             // since taskhandlers are just ttask handlers in the vector
                                             if ProcessRegisterClient::is_message_to_itself(self_rank, &command) {
-                                                self_msg_sender.send((command, None));
+                                                self_msg_sender.send((command, None)).unwrap();
                                             }
                                             else {
                                                 // if it is external message - 
@@ -2005,7 +2005,7 @@ impl ProcessRegisterClient{
                                                     */
                                                     messages_to_be_resent.insert(get_sector_idx_from_command(&command), command.clone());
                                                 }
-                                                let res = serialize_register_command(&command, &mut stream, hmac_system_key).await;
+                                                let res = serialize_register_command(&command, &mut stream, &hmac_system_key).await;
 
                                                 match res {
                                                     Err(_) => {
@@ -2039,7 +2039,7 @@ impl ProcessRegisterClient{
                             _ = retransmition_tick.tick() => {
                                 //retransmission tick
                                 for (_, msg) in &messages_to_be_resent {
-                                    let res = serialize_register_command(&msg, &mut stream, hmac_system_key).await;
+                                    let res = serialize_register_command(&msg, &mut stream, &hmac_system_key).await;
                                     match res {
                                         Err(_) => {
                                             // trying to reconnect in order to fix the conection error
@@ -2050,7 +2050,7 @@ impl ProcessRegisterClient{
                                 }
 
                                 for (_, ack) in &acks_to_be_resent {
-                                    let res = serialize_register_command(&ack, &mut stream, hmac_system_key).await;
+                                    let res = serialize_register_command(&ack, &mut stream, &hmac_system_key).await;
                                     match res {
                                         Err(_) => {
                                             // trying to reconnect in order to fix the conection error
@@ -2070,28 +2070,36 @@ impl ProcessRegisterClient{
         }
     }
 
-    pub async fn new(tcp_locations: Vec<(String, u16)>, messages_to_itself_sender: MessagesToSectorsSender) -> Self {
+    pub async fn new(tcp_locations: Vec<(String, u16)>, messages_to_itself_sender: MessagesToSectorsSender,
+        self_rank: u8,
+        hmac_system_key: Vec<u8>) -> Self {
         // TODO do I need and arc here?
-        let process_channels: Vec<RCommandSender> = Vec::new();
-        let ack_channels: Vec<RCommandSender> = Vec::new();
-        let stubborn_links: Vec<JoinHandle<()>>;
+        let mut msg_to_be_sent: Vec<RCommandSender> = Vec::new();
+        let mut ack_channels: Vec<RCommandSender> = Vec::new();
+        let mut stubborn_links: Vec<JoinHandle<()>> = Vec::new();
 
-        for location in &tcp_locations {
+        for location in tcp_locations {
             let (msg_to_send_sender, msg_to_send_receiver) = unbounded_channel::<RegisterCommand>();
             let (ack_sender, ack_receiver) = unbounded_channel::<RegisterCommand>();
-            let mut process_connection = TcpStream::connect(location).await;
+            
+            // TODO for my own process - add only a handler rebouncing the messages
+            let stubborn_link = tokio::spawn(ProcessRegisterClient::handle_process_connection(location, ack_receiver, msg_to_send_receiver, self_rank, messages_to_itself_sender.clone(), hmac_system_key.clone()));
 
-            while process_connection.is_err() {
-                process_connection = TcpStream::connect(location).await;
-            }
-
-            match process_connection {
-                Err(_) => {connect(port_z_tcp_)}
-            }
-
+            msg_to_be_sent.push(msg_to_send_sender);
+            ack_channels.push(ack_sender);
+            stubborn_links.push(stubborn_link);
         }
 
-        unimplemented!()
+        let register_client = ProcessRegisterClient{
+            messages_to_processes: Arc::new(msg_to_be_sent),
+            ack_channels: Arc::new(ack_channels),
+            stubborn_links: Arc::new(stubborn_links),
+            self_rank: self_rank,
+            self_msg_sender: messages_to_itself_sender,
+        };
+
+        // unimplemented!()
+        register_client
     }
 }
 
