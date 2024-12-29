@@ -30,6 +30,8 @@ type channel_map<T> = HashMap<SectorIdx, (UnboundedSender<T>, UnboundedReceiver<
 type ConnectionMap = HashMap<Uuid, JoinHandle<()>>;
 
 type ClientResponseSender = UnboundedSender<(OperationSuccess, StatusCode)>;
+type ClientResponseReceiver = UnboundedReceiver<(OperationSuccess, StatusCode)>;
+type RCommandSender = UnboundedSender<RegisterCommand>;
 
 struct ConnectionData {
     host: String,
@@ -43,7 +45,10 @@ struct ConnectionHandlerConfig {
     /// Hmac key to verify client requests.
     hmac_client_key: [u8; 32],
     n_sectors: u64,
+    // messages to be processed by registers
     msg_sender: UnboundedSender<(RegisterCommand, SectorIdx)>,
+    // channels to signal the end of client task and possibility of register removal
+    suicide_sender: UnboundedSender<u64>,
 }
 // use hmac::{Hmac, Mac};
 // use sha2::Sha256;
@@ -232,57 +237,62 @@ fn get_error_operation_success(rg_command: RegisterCommand) -> OperationSuccess 
 //     let msg = serialize_error(request_id_not_converted, status_code, hmac_key, msg_response_type);
 //     socket.write_all(&msg).await.unwrap();
 // }
-async fn process_responses_to_clients(mut socket_to_write: OwnedWriteHalf, hmac_key: &[u8], mut client_responses_channel: ClientResponseSender, error_sender: UnboundedSender<Uuid>, handle_id: Uuid) {
+async fn process_responses_to_clients(mut socket_to_write: OwnedWriteHalf, hmac_key: [u8; 32], mut client_responses_channel: ClientResponseReceiver, error_sender: UnboundedSender<Uuid>, handle_id: Uuid) {
     loop {
         let msg = client_responses_channel.recv().await;
 
         match msg {
             None => {
-                error_sender.send(handle_id);
+                error_sender.send(handle_id).unwrap();
             }
             Some((operation_success, status_code)) => {
-                let reply = serialize_response(operation_success, status_code, hmac_key);
+                let reply = serialize_response(operation_success, status_code, &hmac_key);
 
-                socket_to_write.write_all(&reply).await;
+                let send_res = socket_to_write.write_all(&reply).await;
+                if send_res.is_err() {
+                    error_sender.send(handle_id).unwrap();
+                }
             }
         }
     }
 }
 
-async fn create_a_closure(msg_sender: ClientResponseSender) ->  Box<
+async fn create_a_closure(client_response_sender: ClientResponseSender, suicide_sender: UnboundedSender<u64>, sector_idx: u64) ->  Box<
 dyn FnOnce(OperationSuccess) -> Pin<Box<dyn Future<Output = ()> + Send>>
     + Send
     + Sync,
 > {
     Box::new(move |success: OperationSuccess| {
         Box::pin(async move {
-            msg_sender.send((success, StatusCode::Ok));
+            client_response_sender.send((success, StatusCode::Ok)).unwrap();
+            suicide_sender.send(sector_idx);
         })
     })
 
     // unimplemented!()
 }
 
-async fn process_connection(mut socket: TcpStream, addr: SocketAddr, error_sender: UnboundedSender<Uuid>, handle_id: Uuid,  config: Arc<ConnectionHandlerConfig>) {
+async fn process_connection(socket: TcpStream, addr: SocketAddr, error_sender: UnboundedSender<Uuid>, handle_id: Uuid,  config: Arc<ConnectionHandlerConfig>) {
 
-    let (response_msg_sender, mut response_msg_receiver) = unbounded_channel::<(OperationSuccess, StatusCode)>();
+    let (response_msg_sender, response_msg_receiver) = unbounded_channel::<(OperationSuccess, StatusCode)>();
 
     // tcp socket for accepting responses and sending responses
-    let (requests_from_clients_socket, response_to_client_socket) = socket.into_split();
+    let (mut requests_from_clients_socket, response_to_client_socket) = socket.into_split();
 
-    tokio::spawn(process_responses_to_clients(response_to_client_socket, &config.hmac_client_key.clone() , response_msg_receiver, error_sender, handle_id));
+    tokio::spawn(process_responses_to_clients(response_to_client_socket, config.hmac_client_key.clone() , response_msg_receiver, error_sender, handle_id));
 
     loop {
-        let deserialize_result = deserialize_register_command(&mut socket, &config.hmac_system_key, &config.hmac_client_key).await;
+        let deserialize_result = deserialize_register_command(&mut requests_from_clients_socket, &config.hmac_system_key, &config.hmac_client_key).await;
 
         match deserialize_result {
             Err(ref err) if err.kind() == std::io::ErrorKind::InvalidInput => {
                 // TODO send message to client, serialized with error msg
             },
             Err(ref err) if err.kind() == std::io::ErrorKind::Other => {
-
+                // TODO
             },
             Err(_) => {
+                // TODO
                 // error in connection - try to send and send as inactive
             },
             Ok((command, is_hmac_valid)) => {
@@ -294,14 +304,15 @@ async fn process_connection(mut socket: TcpStream, addr: SocketAddr, error_sende
                         // respond_to_client_if_error(socket, get_request_id_from_client_register_command(&command), StatusCode::InvalidSectorIndex, &config.hmac_client_key, get_msg_type_from_client_register_command(&command)).await;
                         let operation_error = get_error_operation_success(command);
                         // let reply = serialize_response(operation_error, StatusCode::InvalidSectorIndex, &config.hmac_client_key);
-                        response_msg_sender.send((operation_error, StatusCode::InvalidSectorIndex));
+                        // TODO if err -> remove handle
+                        response_msg_sender.send((operation_error, StatusCode::InvalidSectorIndex)).unwrap();
                     }
                 }
                 else if !is_hmac_valid {
                     // send information about error
                     if let RegisterCommand::Client(_) = &command {
                         let operation_error = get_error_operation_success(command);
-                        response_msg_sender.send((operation_error, StatusCode::AuthFailure));
+                        response_msg_sender.send((operation_error, StatusCode::AuthFailure)).unwrap();
                     }
                 }
                 else {
@@ -317,6 +328,9 @@ async fn process_connection(mut socket: TcpStream, addr: SocketAddr, error_sende
 
                     if from another process -> send to register client, in order to note which messages have been confirmed
                     */
+                    if let RegisterCommand::Client(ClientRegisterCommand{header, content}) = command {
+                        let closure = create_a_closure(response_msg_sender.clone(), suicide_sender, sector_idx)
+                    }
                 }
             }
         }
@@ -378,7 +392,7 @@ pub async fn run_register_process(config: Configuration) {
     let sectors_written_after_recovery = get_sectors_written_after_recovery(&root_path);
     // let connection_tasks: HashMap<(String, u16), JoinHandle<()>> = HashMap::new();
 
-    let config_for_connections = Arc::new(ConnectionHandlerConfig{hmac_system_key: config.hmac_system_key, hmac_client_key: config.hmac_client_key, n_sectors: config.public.n_sectors, msg_sender: rcommands_sender.clone()});
+    let config_for_connections = Arc::new(ConnectionHandlerConfig{hmac_system_key: config.hmac_system_key, hmac_client_key: config.hmac_client_key, n_sectors: config.public.n_sectors, msg_sender: rcommands_sender.clone(), suicide_sender: suicidal_sender.clone()});
     tokio::spawn(handle_connections(listener, config_for_connections.clone()));
 
     
@@ -1689,6 +1703,20 @@ pub mod transfer_public {
     }
 }
 
+struct ProcessRegisterClient {
+    tcp_locations: Vec<(String, u16)>,
+    // messages to be sent to the processes
+    process_channels: Vec<RCommandSender>,
+    // if connection receives a message regarding a particular register
+    ack_channels: Vec<RCommandSender>,
+    self_rank: u8,
+}
+
+impl ProcessRegisterClient{
+    fn register_response(&self, msg: RegisterCommand) {
+
+    }
+}
 pub mod register_client_public {
     use crate::SystemRegisterCommand;
     use std::sync::Arc;
