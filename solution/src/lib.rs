@@ -2247,7 +2247,11 @@ impl ProcessRegisterClient{
 #[async_trait::async_trait]
 impl RegisterClient for ProcessRegisterClient {
     async fn send(&self, msg: register_client_public::Send) {
-        unimplemented!()
+        let process_idx = get_process_idx_in_vec(msg.target);
+        let sender = self.messages_to_processes[process_idx].clone();
+        sender.send(msg.cmd).unwrap();
+
+        // unimplemented!()
     }
 
     async fn broadcast(&self, msg: Broadcast) {
@@ -2260,9 +2264,9 @@ impl RegisterClient for ProcessRegisterClient {
          */
         for sending_channel in self.messages_to_processes.clone().iter() {
             let cloned_channel = sending_channel.clone();
-            cloned_channel.send(msg.cmd.clone());
+            cloned_channel.send(msg.cmd.clone()).unwrap();
         }
-        unimplemented!()
+        // unimplemented!()
     }
 }
 
