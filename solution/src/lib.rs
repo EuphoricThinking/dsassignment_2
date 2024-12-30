@@ -337,7 +337,7 @@ async fn process_responses_to_clients(mut socket_to_write: OwnedWriteHalf, hmac_
     }
 }
 
-async fn create_a_closure(client_response_sender: ClientResponseSender, sector_idx: u64, self_process_id: u8, is_request_completed: Arc<AtomicBool>, register_client: Arc<dyn RegisterClient>) ->  SuccessCallback {
+fn create_a_closure(client_response_sender: ClientResponseSender, sector_idx: u64, self_process_id: u8, is_request_completed: Arc<AtomicBool>, register_client: Arc<dyn RegisterClient>) ->  SuccessCallback {
     Box::new(move |success: OperationSuccess| {
         Box::pin(async move {
             client_response_sender.send((success, StatusCode::Ok)).unwrap();
@@ -711,15 +711,25 @@ pub async fn run_register_process(config: Configuration) {
             }
 
             command = rcommands_receiver.recv() => {
-                if let Some((rg_command, option_callback)) = command {
+                if let Some((rg_command, option_client_sender)) = command {
                     let sector_idx = get_sector_idx_from_command(&rg_command);
                     
-                    if let RegisterCommand::Client(ClientRegisterCommand{
-                        header: client_header,
-                        content: client_content,
-                    }) = &rg_command {
-                        if is_read_request(&client_content) {
+                    if let RegisterCommand::Client(client_command) = &rg_command {
+                        if let Some(sender) = option_client_sender {
+                            let is_request_completed = Arc::new(AtomicBool::new(false));
+                            let success_callback = create_a_closure(sender, sector_idx, config.public.self_rank, is_request_completed.clone(), register_client.clone());
 
+                            let client_sender_per_sector_res = client_msg_queues.get(&sector_idx);
+
+                            match client_sender_per_sector_res {
+                                None => {
+                                    // a new register to be created
+                                }
+                                Some(client_sender_per_sector) => {
+                                    // The register for the sector already exists - just send the message
+                                    client_sender_per_sector.send((client_command.clone(), success_callback)).unwrap();
+                                }
+                            }
                         }
                     }
                     
