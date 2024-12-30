@@ -22,6 +22,9 @@ use std::pin::Pin;
 use std::future::Future;
 use std::marker::Send;
 
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
+
 use tokio::time;
 
 use uuid::Uuid;
@@ -315,14 +318,13 @@ async fn process_responses_to_clients(mut socket_to_write: OwnedWriteHalf, hmac_
     }
 }
 
-async fn create_a_closure(client_response_sender: ClientResponseSender, suicide_sender: UnboundedSender<u64>, sector_idx: u64, self_process_id: u8, client_request_receiver: Arc<RCommandReceiver>, internal_requests_receiver: Arc<RCommandReceiver>, register_client: Arc<dyn RegisterClient>) ->  SuccessCallback {
+async fn create_a_closure(client_response_sender: ClientResponseSender, sector_idx: u64, self_process_id: u8, is_request_completed: Arc<AtomicBool>, register_client: Arc<dyn RegisterClient>) ->  SuccessCallback {
     Box::new(move |success: OperationSuccess| {
         Box::pin(async move {
             client_response_sender.send((success, StatusCode::Ok)).unwrap();
 
-            if internal_requests_receiver.is_empty() && client_request_receiver.is_empty() {
-                // to be confirmed later by the process
-                suicide_sender.send(sector_idx);
+            // TODO change arc to sth simpler
+            
 
                 /*
                 Messages sent in channels are queued
@@ -341,12 +343,15 @@ async fn create_a_closure(client_response_sender: ClientResponseSender, suicide_
                 In this implementation, the messages are broadcasted using the same channel, which ensures that when the current register sends its message at this moment, any later message will be following the broadcasted now message
                  */
                 register_client.broadcast(Broadcast{cmd: Arc::new(msg)}).await;
-            }
+
+                is_request_completed.store(true, Ordering::Relaxed);
+            
         })
     })
 
     // unimplemented!()
 }
+
 
 fn is_msg_an_ACK(command: &RegisterCommand) -> bool {
     if let RegisterCommand::System(SystemRegisterCommand{header, content}) = &command {
