@@ -34,6 +34,10 @@ use sha2::Sha256;
 type HmacSha256 = Hmac<Sha256>;
 
 type channel_map<T> = HashMap<SectorIdx, (UnboundedSender<T>, UnboundedReceiver<T>)>;
+
+type SendersMap<T> = HashMap<SectorIdx, UnboundedSender<T>>;
+type ReceiverMap<T> = HashMap<SectorIdx, UnboundedReceiver<T>>;
+
 type ConnectionMap = HashMap<Uuid, JoinHandle<()>>;
 
 type ClientResponseSender = UnboundedSender<(OperationSuccess, StatusCode)>;
@@ -118,6 +122,16 @@ fn get_sector_idx_from_filename(sector_path: &PathBuf) -> u64 {
     }
 
     return 0;
+}
+
+fn is_read_request(command: &RegisterCommand) -> bool {
+    if let RegisterCommand::Client(ClientRegisterCommand{header: _, content}) = command {
+        if let ClientRegisterCommandContent::Read = content {
+            return true;
+        }
+    }
+
+    false
 }
 
 async fn get_sectors_written_after_recovery(path: &PathBuf) -> HashSet<SectorIdx> {
@@ -405,6 +419,8 @@ select_biased! might intorduce the risk of starving channels (when listing respo
 
 Since non-blocking execution of the process is important as it is resonsible for delegation of the tasks for sectors, the author decides that it is more performant for the sector to wait.
 
+Since the function needs mutable receivers in order to receive messages, the Receiver does not implement Clone trait and Arcs allow only immutable references (except for using a Mutex), an additional confirmation channel loop for confirmation of suicide notes has been introduced.
+
 */
 async fn handle_atomic_register(mut client_commands_channel: ClientMsgCallbackReceiver, mut system_commands_channel: SystemCommandReceiver, is_request_completed: Arc<AtomicBool>, mut has_process_received_suicide_note: UnboundedReceiver<bool>, confirm_whether_register_is_needed: UnboundedSender<bool>, mut atomic_register: RegisterPerSector, request_suicide: UnboundedSender<SectorIdx>, sector_idx: SectorIdx) {
 
@@ -572,6 +588,9 @@ async fn process_connection(socket: TcpStream, addr: SocketAddr, error_sender: U
                             // if is_msg_an_expected_system_response(&command) {
                             // if we have received an ack we have sent before (process id might differ, but uuid should be unique)
                             // double check for unnecessary sending
+                            // ACK matching old requests will not interfere with the algorithm
+                            // however, ACKs are resent in order to inform
+                            // about the operation completion
                             if is_msg_an_ACK(&command) {//&& (config.self_rank != get_sender_rank(&command)) {
                                 config.register_client.register_response(command.clone());
                             }
@@ -620,6 +639,13 @@ async fn handle_connections(listener: TcpListener, config: Arc<ConnectionHandler
     }
 }
 
+/*
+Process delegates the tasks to registers
+
+The bottleneck is single queue for incoming messages. Since AtomicRegisters should be created dynamically, the HashMap containing currently working registers might be read and modified at the same time. This would suggest using readers-writers solution; however, the readers and writers don't know their roles (they would need to check the HashMap content). Sharing the HashMap would require using Mutex, which could block the worker. However, sending a message to an unbound channel is a non-blocking operation. Additionally, the process might serve the requests constantly, without waiting for resources, while handlers for connection might process another incoming messages.
+
+
+*/
 pub async fn run_register_process(config: Configuration) {
     let (host, port) = get_own_number_in_tcp_ports(config.public.self_rank, &config.public.tcp_locations);
     let address = format!("{}:{}", host, port);
@@ -627,22 +653,23 @@ pub async fn run_register_process(config: Configuration) {
 
     // tasks managing registers
     let mut register_handlers: HashMap<SectorIdx, JoinHandle<()>> = HashMap::new();
-    /*
-    channels granting permission to work by a register; if register detects empty queues and expresses a wish to be dropped, the process checks if the reigster is really not needed; if it is needed, it gives a coin, allowing work; 
-     */
-    let mut active_coin_channels: channel_map<bool> = HashMap::new();
-    // let mut suicidal_channels: channel_map<SectorIdx> = HashMap::new();
-    // let (mut internal_send_channel, mut internal_recv_channel) = unbounded_channel::<SuicideOrMsg>();
-    let mut register_msg_queues: channel_map<RegisterCommand> = HashMap::new();
+    // requests from clients to registers
+    let mut client_msg_queues: SendersMap<ClientMsgCallback> = HashMap::new();
+    // requests from other processes
+    let mut system_msg_queues: SendersMap<SystemRegisterCommand> = HashMap::new();
+
     // registers inform the process that they are probably not needed
     let (suicidal_sender, mut suicidal_receiver) = unbounded_channel::<SectorIdx>();
+    let confirm_suicide_note_delivery: SendersMap<bool> = HashMap::new();
+    let get_suicide_final_ack: ReceiverMap<bool> = HashMap::new();
+
     // messages from clients, other processes and internal
     let (rcommands_sender, mut rcommands_receiver) = unbounded_channel::<MessagesToDelegate>();
 
     let root_path = config.public.storage_dir.clone();
     let sector_manager = build_sectors_manager(config.public.storage_dir).await;
     // let sectors_written_after_recovery = sector_manager.get_
-    let sectors_written_after_recovery = get_sectors_written_after_recovery(&root_path);
+    let sectors_written_after_recovery = get_sectors_written_after_recovery(&root_path).await;
     // let connection_tasks: HashMap<(String, u16), JoinHandle<()>> = HashMap::new();
 
     let register_client = Arc::new(ProcessRegisterClient::new(config.public.tcp_locations.clone(), rcommands_sender.clone(),
@@ -650,12 +677,25 @@ pub async fn run_register_process(config: Configuration) {
 
     // let sectors_manager = build_sectors_manager(config.public.storage_dir).await;
     // TODO remove
-    let register_TEST = build_atomic_register(config.public.self_rank, 0, register_client.clone(), sector_manager, config.public.tcp_locations.len() as u8);
 
     let config_for_connections = Arc::new(ConnectionHandlerConfig{hmac_system_key: config.hmac_system_key, hmac_client_key: config.hmac_client_key, n_sectors: config.public.n_sectors, msg_sender: rcommands_sender.clone(), register_client: register_client.clone(), self_rank: config.public.self_rank});
 
     tokio::spawn(handle_connections(listener, config_for_connections.clone()));
 
+    loop {
+        tokio::select! {
+            suicide_note = suicidal_receiver.recv() => {
+
+            }
+
+            command = rcommands_receiver.recv() => {
+                if let Some((rg_command, option_callback)) = command {
+                    let sector_idx = get_sector_idx_from_command(&rg_command);
+                    
+                }
+            }
+        }
+    }
     
     unimplemented!()
 }
