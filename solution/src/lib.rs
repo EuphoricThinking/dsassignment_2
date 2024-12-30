@@ -390,11 +390,12 @@ async fn is_register_going_to_be_killed(client_commands_channel: &ClientMsgCallb
 
             confirm_whether_register_is_needed.send(are_channels_empty).unwrap();
 
-            if are_channels_empty {
-                // we know we are not needed and we will be killed
-                // break;
-                return true;
-            }
+            return are_channels_empty;
+            // if are_channels_empty {
+            //     // we know we are not needed and we will be killed
+            //     // break;
+            //     return true;
+            // }
         }
     }
 
@@ -717,16 +718,44 @@ pub async fn run_register_process(config: Configuration) {
     loop {
         tokio::select! {
             suicide_note = suicidal_receiver.recv() => {
+                if let Some(suicidal_sector_idx) = suicide_note {
+                    // the sector has requested suicide - we have to check whether its queues are still empty after this time
+                    let ask_for_confirmation_res = confirm_suicide_note_delivery.get(&suicidal_sector_idx);
+                    if let Some(ask_for_confirmation) = ask_for_confirmation_res {
+                        ask_for_confirmation.send(1).unwrap();
 
+                        let register_final_ack_res = get_suicide_final_ack.get_mut(&suicidal_sector_idx);
+                        if let Some(register_final_ack_receiver) = register_final_ack_res {
+                            let is_idle_res = register_final_ack_receiver.recv().await;
+
+                            if let Some(is_idle) = is_idle_res {
+                                if is_idle {
+                                // the register's queues are still empty
+                                // we can remove it together with all associated
+                                // channels
+                                // although channels might be overwritten during the next map update,
+                                // for the sake of memory management - they are deleted, too
+                                    client_msg_queues.remove(&suicidal_sector_idx);
+                                    system_msg_queues.remove(&suicidal_sector_idx);
+                                    is_request_completed_map.remove(&suicidal_sector_idx);
+                                    confirm_suicide_note_delivery.remove(&suicidal_sector_idx);
+                                    get_suicide_final_ack.remove(&suicidal_sector_idx);
+
+                                    register_handlers.remove(&suicidal_sector_idx);
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             command = rcommands_receiver.recv() => {
                 if let Some((rg_command, option_client_sender)) = command {
                     let sector_idx = get_sector_idx_from_command(&rg_command);
 
-                    let client_sender_per_sector_res = client_msg_queues.get(&sector_idx);
+                    let task_handler = register_handlers.get(&sector_idx);
 
-                    if client_sender_per_sector_res.is_none() {
+                    if task_handler.is_none() {
                         // None => {
                             // a new register to be created
                             let (client_cmd_sender, client_cmd_receiver) = unbounded_channel::<ClientMsgCallback>();
