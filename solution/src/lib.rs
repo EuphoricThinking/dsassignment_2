@@ -361,8 +361,10 @@ async fn create_a_closure(client_response_sender: ClientResponseSender, sector_i
 
 /*
 When a channel sends sector idx via suicide_channel in order to signal that 
-it might be idle, it might have received new messages
-
+it might be idle, it might have received new messages just before checking
+whether channels are empty since it runs in a task independent of the process which manages sending the commands to the channel
+When the process receives a suicide note in select!, it stops sending messsages.
+It asks the register whether channels are still full via another channel. Since this channels is only for one-message communication at this specific moment, the communication is fast from the process side. Additionally, the register might wait for the retrieval of its suicide note using await, not blocking other tasks.
 
 */
 async fn handle_atomic_register(mut client_commands_channel: ClientMsgCallbackReceiver, mut system_commands_channel: SystemCommandReceiver, is_request_completed: Arc<AtomicBool>, mut has_process_received_suicide_note: UnboundedReceiver<bool>, confirm_whether_register_is_needed: UnboundedSender<bool>, mut atomic_register: RegisterPerSector, request_suicide: UnboundedSender<SectorIdx>, sector_idx: SectorIdx) {
