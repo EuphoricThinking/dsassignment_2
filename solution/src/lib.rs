@@ -1974,10 +1974,17 @@ impl ProcessRegisterClient{
         - if in the retransmition set there is a message with the same uuid, but with older type (i.e. we are going to retransmit WRITE_PROC, but our new message is ACK): we know that the algorithm advanced and that we can replace that message
         - if there is a message with the same uuid and the same type: we might replace it with the new message, because maybe we can deliver the most recent value since we might have finished the WRITE request in the meantime
         - if there is a message with the same uuid already in the set and we are going to send the message with the *older* type (reordering of received messages, stubborn delivery, TCP issues etc.): we LEAVE the message in the set and DON'T send our message
-        - if there is a message from the given sector with a DIFFERENT uuid: since atomic registers execute requests for clients in linear order, the reply we were about to resend is not needed (the process finished the previous operation or crashed)
+        - if there is a message from the given sector with a DIFFERENT uuid: since atomic registers execute requests for clients in linear order, the reply we were about to resend is not needed (the process finished the previous operation or crashed) and we replace the message
 
-        Handling of final acknowledgement
-         */
+        Handling of final acknowledgements
+        SuccessCallback broadcasts to all stubborn links ACK message with nil uuid. Since our process was the one initiating the connection, it wouldn't send the acknowledgement. Additionally, even if the given sector could send ACKs as a response to the other processes - broadcast sends messages to the same channel as send(), therefore the messages from the given sector will be queued in the order of sending. 
+        
+        When the stubborn link receives nil acknowledgment from itself, it sends acknowledgment to the process it is communicating with. This process was the one which has sent ack previously - we send the ack back. The process shouldn't have received the ack with this uuid - it was the one who has been sending it. Therefore it knows that the operation was finished and removes the ACK from the retransmition set.
+
+        On the other hand, the initiatnig process must know that it can stop sending ACK after SuccessCallback. It receives from the acknowledged process (TODO) ReadProc message with the uuid of the completed request. Since the initiating process has been the one which has sent the ReadProc, it knows it should not have received ReadProc with this uuid.
+
+        Since the operation is finished, a new uid is created for the next operation startd by the atomic register, therefore
+        */
 
         let mut initiated_messages_to_be_resent: RetransmitionMap = HashMap::new();
         // acks to be resent in case of readreturn
