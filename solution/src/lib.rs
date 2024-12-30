@@ -2000,13 +2000,7 @@ impl ProcessRegisterClient{
     //     }
     // }
 
-    async fn handle_process_connection(tcp_location: (String, u16), mut ack_receiver: RCommandReceiver, mut msg_to_send_receiver: RegisterClientReceiver, self_rank: u8, self_msg_sender: MessagesToSectorsSender, hmac_system_key: Vec<u8>) {
-        // todo add_broadcast
-
-        let mut retransmition_tick = time::interval(Duration::from_millis(RETRANSMITION_DELAY));
-        retransmition_tick.tick().await;
-
-        /*
+           /*
         The process sends two types of messages: as an initiating side (it hsa received a request from client) or as a responding side (it receives requests from a process which has contacted the client).
 
         If it is an initiating side, every consecutive message issued by a register is a SINGLE announcement of the next step of the algorithm; these messages are not duplicated per sector and uuid, therefore when inserting in the hashmap - they overwrite the old messages (value is updated under the sector idx key). Every sector proceeds with only one value at the time, therefore the flow of the messages per sector is linear and they might be safely updated.
@@ -2026,11 +2020,16 @@ impl ProcessRegisterClient{
 
         The further retransmissions of ACKs does not influence the progress of the system, since the operation has been already completed. If some processes do not receive the final ACK from the initiating process, they might resend acks, but they will be ignored, since op_id will be outdated
         */
+    async fn handle_process_connection(tcp_location: (String, u16), mut ack_receiver: RCommandReceiver, mut msg_to_send_receiver: RegisterClientReceiver, self_rank: u8, self_msg_sender: MessagesToSectorsSender, hmac_system_key: Vec<u8>) {
+        // todo add_broadcast
+
+        let mut retransmition_tick = time::interval(Duration::from_millis(RETRANSMITION_DELAY));
+        retransmition_tick.tick().await;
 
         // TODO set as none op_id
         let mut initiated_messages_to_be_resent: RetransmissionMap = HashMap::new();
         // acks to be resent in case of readreturn
-        let mut acks_to_be_resent: AckRetransmitMap = HashMap::new();
+        // let mut acks_to_be_resent: AckRetransmitMap = HashMap::new();
         let mut replies_to_be_resent: RetransmissionMap = HashMap::new();
 
         // let mut connection_error_to_be_resent: Vec<RegisterCommand> = Vec::new();
@@ -2067,11 +2066,14 @@ impl ProcessRegisterClient{
                                         let (is_readreturn, msg_ident) = ProcessRegisterClient::is_ack_from_readreturn_with_get_msg_ident(&command, &initiated_messages_to_be_resent, self_rank);
 
                                         if is_readreturn {
+                                            /*
+                                            successcallback does not know the uuid, therefore we check uuid from write_proc and create a new message with upddated uuid (susbtitute for nil in readreturn ACK)
+                                             */
                                             let updated_command = ProcessRegisterClient::get_command_with_updated_msg_ident(&command, msg_ident);
-                                            acks_to_be_resent.insert(msg_ident, updated_command.clone());
+                                            // acks_to_be_resent.insert(msg_ident, updated_command.clone());
 
                                             // remove write_proc from map
-                                            // readreturn checks also for write_proc
+                                            // readreturn checks also for write_proc and returns true only if the last message was write_proc for a given sector
                                             initiated_messages_to_be_resent.remove(&get_sector_idx_from_command(&updated_command));
 
                                             let res = serialize_register_command(&updated_command, &mut stream, &hmac_system_key).await;
@@ -2110,6 +2112,7 @@ impl ProcessRegisterClient{
                                                     */
                                                     initiated_messages_to_be_resent.insert(ProcessRegisterClient::get_sector_idx_from_arced_systemcommand(&command), command.as_ref().clone());
                                                 }
+                                                
                                                 let res = serialize_register_command(&ProcessRegisterClient::wrap_systemcommand_into_command(command.as_ref()), &mut stream, &hmac_system_key).await;
 
                                                 match res {
