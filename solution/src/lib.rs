@@ -609,6 +609,19 @@ async fn process_connection(socket: TcpStream, addr: SocketAddr, error_sender: U
     }
 }
 
+fn create_empty_read_operation_success(command: &ClientRegisterCommand, client_response_sender: ClientResponseSender) {
+    let ClientRegisterCommand{header, ..} = command;
+
+    let zeroed_vec = vec![0; CONTENT_SIZE];
+    let zeroed_secor = SectorVec(zeroed_vec);
+    
+    let operation_success = OperationSuccess{
+        request_identifier: header.request_identifier,
+        op_return: OperationReturn::Read(ReadReturn { read_data: zeroed_secor })
+    };
+}
+
+
 async fn handle_connections(listener: TcpListener, config: Arc<ConnectionHandlerConfig>) {
     let mut connections: ConnectionMap = HashMap::new();
     // for deletion of erroneous connections
@@ -692,6 +705,16 @@ pub async fn run_register_process(config: Configuration) {
                 if let Some((rg_command, option_callback)) = command {
                     let sector_idx = get_sector_idx_from_command(&rg_command);
                     
+                    if let RegisterCommand::Client(ClientRegisterCommand{
+                        header: client_header,
+                        content: client_content,
+                    }) = rg_command {
+
+                    }
+                    
+                    if let RegisterCommand::System(SystemRegisterCommand{
+                        header: system
+                    })
                 }
             }
         }
