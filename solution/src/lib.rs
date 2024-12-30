@@ -37,6 +37,7 @@ type channel_map<T> = HashMap<SectorIdx, (UnboundedSender<T>, UnboundedReceiver<
 
 type SendersMap<T> = HashMap<SectorIdx, UnboundedSender<T>>;
 type ReceiverMap<T> = HashMap<SectorIdx, UnboundedReceiver<T>>;
+type RequestCompletionMap = HashMap<SectorIdx, Arc<AtomicBool>>;
 
 type ConnectionMap = HashMap<Uuid, JoinHandle<()>>;
 
@@ -679,6 +680,8 @@ pub async fn run_register_process(config: Configuration) {
     let mut client_msg_queues: SendersMap<ClientMsgCallback> = HashMap::new();
     // requests from other processes
     let mut system_msg_queues: SendersMap<SystemRegisterCommand> = HashMap::new();
+    let mut is_request_completed_map: RequestCompletionMap = HashMap::new();
+
 
     // registers inform the process that they are probably not needed
     let (suicidal_sender, mut suicidal_receiver) = unbounded_channel::<SectorIdx>();
@@ -720,46 +723,65 @@ pub async fn run_register_process(config: Configuration) {
             command = rcommands_receiver.recv() => {
                 if let Some((rg_command, option_client_sender)) = command {
                     let sector_idx = get_sector_idx_from_command(&rg_command);
-                    
+
+                    let client_sender_per_sector_res = client_msg_queues.get(&sector_idx);
+
+                    if client_sender_per_sector_res.is_none() {
+                        // None => {
+                            // a new register to be created
+                            let (client_cmd_sender, client_cmd_receiver) = unbounded_channel::<ClientMsgCallback>();
+                            let (system_cmd_sender, system_cmd_receiver) = unbounded_channel::<SystemRegisterCommand>();
+                            let (suicide_note_delivery_confirmation_sender, suicide_note_delivery_confirmation_receiver) = unbounded_channel::<u8>();
+                            let (suicide_final_ack_from_register_sender, suicide_final_ack_from_register_receiver) = unbounded_channel::<bool>();
+
+                            let is_request_completed = Arc::new(AtomicBool::new(false));
+
+                            let atomic_register = build_atomic_register(config.public.self_rank, sector_idx, register_client.clone(), sector_manager.clone(), processes_count).await;
+
+                            let atomic_register_handler = tokio::spawn(handle_atomic_register(client_cmd_receiver, system_cmd_receiver, is_request_completed.clone(), suicide_note_delivery_confirmation_receiver, suicide_final_ack_from_register_sender, atomic_register, suicidal_sender.clone(), sector_idx));
+
+                            confirm_suicide_note_delivery.insert(sector_idx, suicide_note_delivery_confirmation_sender);
+                            get_suicide_final_ack.insert(sector_idx, suicide_final_ack_from_register_receiver);
+                            client_msg_queues.insert(sector_idx, client_cmd_sender);
+                            system_msg_queues.insert(sector_idx, system_cmd_sender);
+                            is_request_completed_map.insert(sector_idx, is_request_completed);
+
+                            register_handlers.insert(sector_idx, atomic_register_handler);
+                        // }
+                        // Some(client_sender_per_sector) => {
+                        //     // The register for the sector already exists - just send the message
+                        //     client_sender_per_sector.send((client_command.clone(), success_callback)).unwrap();
+                        // }
+                    }
+
+                    // lookup in hashmap should be constant, therefore we can repeat the lookup after insertion
+                    // at this moment the register should be created if it not has been already
+
+
                     if let RegisterCommand::Client(client_command) = &rg_command {
                         if let Some(sender) = option_client_sender {
-                            let is_request_completed = Arc::new(AtomicBool::new(false));
-                            let success_callback = create_a_closure(sender, sector_idx, config.public.self_rank, is_request_completed.clone(), register_client.clone());
+                            let is_request_completed_res = is_request_completed_map.get(&sector_idx);
 
-                            let client_sender_per_sector_res = client_msg_queues.get(&sector_idx);
+                            if let Some(is_request_completed) = is_request_completed_res {
+                               let success_callback = create_a_closure(sender, sector_idx, config.public.self_rank, is_request_completed.clone(), register_client.clone());
 
-                            match client_sender_per_sector_res {
-                                None => {
-                                    // a new register to be created
-                                    let (client_cmd_sender, client_cmd_receiver) = unbounded_channel::<ClientMsgCallback>();
-                                    let (system_cmd_sender, system_cmd_receiver) = unbounded_channel::<SystemRegisterCommand>();
-                                    let (suicide_note_delivery_confirmation_sender, suicide_note_delivery_confirmation_receiver) = unbounded_channel::<u8>();
-                                    let (suicide_final_ack_from_register_sender, suicide_final_ack_from_register_receiver) = unbounded_channel::<bool>();
-
-                                    let atomic_register = build_atomic_register(config.public.self_rank, sector_idx, register_client.clone(), sector_manager.clone(), processes_count).await;
-
-                                    let atomic_register_handler = tokio::spawn(handle_atomic_register(client_cmd_receiver, system_cmd_receiver, is_request_completed, suicide_note_delivery_confirmation_receiver, suicide_final_ack_from_register_sender, atomic_register, suicidal_sender.clone(), sector_idx));
-
-                                    confirm_suicide_note_delivery.insert(sector_idx, suicide_note_delivery_confirmation_sender);
-                                    get_suicide_final_ack.insert(sector_idx, suicide_final_ack_from_register_receiver);
-                                    client_msg_queues.insert(sector_idx, client_cmd_sender);
-                                    system_msg_queues.insert(sector_idx, system_cmd_sender);
-
-                                    register_handlers.insert(sector_idx, atomic_register_handler);
-                                }
-                                Some(client_sender_per_sector) => {
-                                    // The register for the sector already exists - just send the message
-                                    client_sender_per_sector.send((client_command.clone(), success_callback)).unwrap();
-                                }
+                               let client_sender_res = client_msg_queues.get(&sector_idx);
+                               if let Some(client_sender) = client_sender_res {
+                                client_sender.send((client_command.clone(), success_callback)).unwrap();
+                               }
                             }
                         }
                     }
+                            
+                        
                     
-                    if let RegisterCommand::System(SystemRegisterCommand{
-                        header: system_header,
-                        content: system_content,
-                    }) = &rg_command {
+                    if let RegisterCommand::System(system_command
+                    ) = &rg_command {
+                        let system_sender_res = system_msg_queues.get(&sector_idx);
 
+                        if let Some(system_sender) = system_sender_res {
+                            system_sender.send(system_command.clone()).unwrap();
+                        }
                     }
                 }
             }
