@@ -1964,8 +1964,25 @@ impl ProcessRegisterClient{
         let mut retransmition_tick = time::interval(Duration::from_millis(RETRANSMITION_DELAY));
         retransmition_tick.tick().await;
 
+        /*
+        The process sends two types of messages: as an initiating side (it hsa received a request from client) or as a responding side (it receives requests from a process which has contacted the client).
+
+        If it is an initiating side, every consecutive message issued by a register is a SINGLE announcement of the next step of the algorithm; these messages are not duplicated per sector and uuid, therefore when inserting in the hashmap - they overwrite the old messages (value is updated under the sector idx key). Every sector proceeds with only one value at the time, therefore the flow of the messages per sector is linear and they might be safely updated.
+
+        If it is a responding side, it might have to respond to the messages of an unpredictable order (TCP might be out of roder or the initiating process proceeed with the majority of votes, without our process) and they also might be repeated by stubborn links.
+        When we reply to the given process, to the given sector idx:
+        - if in the retransmition set there is a message with the same uuid, but with older type (i.e. we are going to retransmit WRITE_PROC, but our new message is ACK): we know that the algorithm advanced and that we can replace that message
+        - if there is a message with the same uuid and the same type: we might replace it with the new message, because maybe we can deliver the most recent value since we might have finished the WRITE request in the meantime
+        - if there is a message with the same uuid already in the set and we are going to send the message with the *older* type (reordering of received messages, stubborn delivery, TCP issues etc.): we LEAVE the message in the set and DON'T send our message
+        - if there is a message from the given sector with a DIFFERENT uuid: since atomic registers execute requests for clients in linear order, the reply we were about to resend is not needed (the process finished the previous operation or crashed)
+
+        Handling of final acknowledgement
+         */
+
         let mut initiated_messages_to_be_resent: RetransmitionMap = HashMap::new();
+        // acks to be resent in case of readreturn
         let mut acks_to_be_resent: AckRetransmitMap = HashMap::new();
+        let mut replies_to_be_resent: RetransmitionMap = HashMap::new();
 
         // let mut connection_error_to_be_resent: Vec<RegisterCommand> = Vec::new();
 
