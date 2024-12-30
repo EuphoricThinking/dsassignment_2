@@ -372,7 +372,7 @@ fn create_a_closure(client_response_sender: ClientResponseSender, sector_idx: u6
 }
 
 
-async fn is_register_going_to_be_killed(client_commands_channel: &ClientMsgCallbackReceiver, system_commands_channel: &SystemCommandReceiver, has_process_received_suicide_note: &mut UnboundedReceiver<bool>, confirm_whether_register_is_needed: &UnboundedSender<bool>, request_suicide: &UnboundedSender<SectorIdx>, sector_idx: SectorIdx) -> bool {
+async fn is_register_going_to_be_killed(client_commands_channel: &ClientMsgCallbackReceiver, system_commands_channel: &SystemCommandReceiver, has_process_received_suicide_note: &mut UnboundedReceiver<u8>, confirm_whether_register_is_needed: &UnboundedSender<bool>, request_suicide: &UnboundedSender<SectorIdx>, sector_idx: SectorIdx) -> bool {
     // if there is a chance that this register is not needed
     if client_commands_channel.is_empty() && system_commands_channel.is_empty() {  
         // inform the process that the register might be idle
@@ -420,7 +420,7 @@ Since non-blocking execution of the process is important as it is resonsible for
 Since the function needs mutable receivers in order to receive messages, the Receiver does not implement Clone trait and Arcs allow only immutable references (except for using a Mutex), an additional confirmation channel loop for confirmation of suicide notes has been introduced.
 
 */
-async fn handle_atomic_register(mut client_commands_channel: ClientMsgCallbackReceiver, mut system_commands_channel: SystemCommandReceiver, is_request_completed: Arc<AtomicBool>, mut has_process_received_suicide_note: UnboundedReceiver<bool>, confirm_whether_register_is_needed: UnboundedSender<bool>, mut atomic_register: RegisterPerSector, request_suicide: UnboundedSender<SectorIdx>, sector_idx: SectorIdx) {
+async fn handle_atomic_register(mut client_commands_channel: ClientMsgCallbackReceiver, mut system_commands_channel: SystemCommandReceiver, is_request_completed: Arc<AtomicBool>, mut has_process_received_suicide_note: UnboundedReceiver<u8>, confirm_whether_register_is_needed: UnboundedSender<bool>, mut atomic_register: Box<dyn AtomicRegister>, request_suicide: UnboundedSender<SectorIdx>, sector_idx: SectorIdx) {
 
     loop {
         tokio::select! {
@@ -682,8 +682,10 @@ pub async fn run_register_process(config: Configuration) {
 
     // registers inform the process that they are probably not needed
     let (suicidal_sender, mut suicidal_receiver) = unbounded_channel::<SectorIdx>();
-    let confirm_suicide_note_delivery: SendersMap<bool> = HashMap::new();
+    let confirm_suicide_note_delivery: SendersMap<u8> = HashMap::new();
     let get_suicide_final_ack: ReceiverMap<bool> = HashMap::new();
+
+    let processes_count = config.public.tcp_locations.len() as u8;
 
     // messages from clients, other processes and internal
     let (rcommands_sender, mut rcommands_receiver) = unbounded_channel::<MessagesToDelegate>();
@@ -724,6 +726,14 @@ pub async fn run_register_process(config: Configuration) {
                             match client_sender_per_sector_res {
                                 None => {
                                     // a new register to be created
+                                    let (client_cmd_sender, client_cmd_receiver) = unbounded_channel::<ClientMsgCallback>();
+                                    let (system_cmd_sender, system_cmd_receiver) = unbounded_channel::<SystemRegisterCommand>();
+                                    let (suicide_note_delivery_confirmation_sender, suicide_note_delivery_confirmation_receiver) = unbounded_channel::<u8>();
+                                    let (suicide_final_ack_from_register_sender, suicide_final_ack_from_register_receiver) = unbounded_channel::<bool>();
+
+                                    let atomic_register = build_atomic_register(config.public.self_rank, sector_idx, register_client.clone(), sector_manager.clone(), processes_count).await;
+
+                                    let atomic_register_handler = tokio::spawn(handle_atomic_register(client_cmd_receiver, system_cmd_receiver, is_request_completed, suicide_note_delivery_confirmation_receiver, suicide_final_ack_from_register_sender, atomic_register, suicidal_sender.clone(), sector_idx));
                                 }
                                 Some(client_sender_per_sector) => {
                                     // The register for the sector already exists - just send the message
