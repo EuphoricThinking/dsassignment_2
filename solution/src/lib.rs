@@ -366,6 +366,15 @@ whether channels are empty since it runs in a task independent of the process wh
 When the process receives a suicide note in select!, it stops sending messsages.
 It asks the register whether channels are still full via another channel. Since this channels is only for one-message communication at this specific moment, the communication is fast from the process side. Additionally, the register might wait for the retrieval of its suicide note using await, not blocking other tasks.
 
+However, there might have been sent new messages and the register is not handling them. Consider awaiting in the select for the response of the process:
+- if other channels are empty, the process and the register communicate instantly
+- if the system channel requests an action, the process might block for a moment
+- if the client channel requests an action, the action is followed by multiple steps and awaiting for respones - the process waits longer
+
+select_biased! might intorduce the risk of starving channels (when listing response from the process at the top; it is only one response, however, client and system channels should be picked randomly)
+
+Since non-blocking execution of the process is important as it is resonsible for delegation of the tasks for sectors, the author decides that it is more performant for the sector to wait.
+
 */
 async fn handle_atomic_register(mut client_commands_channel: ClientMsgCallbackReceiver, mut system_commands_channel: SystemCommandReceiver, is_request_completed: Arc<AtomicBool>, mut has_process_received_suicide_note: UnboundedReceiver<bool>, confirm_whether_register_is_needed: UnboundedSender<bool>, mut atomic_register: RegisterPerSector, request_suicide: UnboundedSender<SectorIdx>, sector_idx: SectorIdx) {
 
@@ -413,6 +422,9 @@ async fn handle_atomic_register(mut client_commands_channel: ClientMsgCallbackRe
             }
 
             system_msg = system_commands_channel.recv() => {
+                if let Some(system_command) = system_msg {
+                    atomic_register.system_command(system_command).await;
+                }
 
             }
         }
