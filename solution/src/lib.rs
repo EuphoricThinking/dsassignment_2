@@ -359,6 +359,36 @@ async fn create_a_closure(client_response_sender: ClientResponseSender, sector_i
     // unimplemented!()
 }
 
+
+async fn is_register_going_to_be_killed(client_commands_channel: &ClientMsgCallbackReceiver, system_commands_channel: &SystemCommandReceiver, has_process_received_suicide_note: &mut UnboundedReceiver<bool>, confirm_whether_register_is_needed: &UnboundedSender<bool>, request_suicide: &UnboundedSender<SectorIdx>, sector_idx: SectorIdx) -> bool {
+    // if there is a chance that this register is not needed
+    if client_commands_channel.is_empty() && system_commands_channel.is_empty() {  
+        // inform the process that the register might be idle
+        request_suicide.send(sector_idx).unwrap();
+
+        /*
+        the load of channels might change before the process reads the suicide request,
+        even after checking the emptiness and before sending the request
+         */
+        let confirmation = has_process_received_suicide_note.recv().await;
+        if let Some(_) = confirmation {
+            // we reconfirm whether we still don't have work ot do
+            let are_channels_empty = client_commands_channel.is_empty() && system_commands_channel.is_empty();
+
+            confirm_whether_register_is_needed.send(are_channels_empty).unwrap();
+
+            if are_channels_empty {
+                // we know we are not needed and we will be killed
+                // break;
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+
 /*
 When a channel sends sector idx via suicide_channel in order to signal that 
 it might be idle, it might have received new messages just before checking
@@ -396,28 +426,32 @@ async fn handle_atomic_register(mut client_commands_channel: ClientMsgCallbackRe
 
                     // restore the value
                     is_request_completed.store(false, Ordering::Relaxed);
-                    // if there is a chance that this register is not needed
-                    if client_commands_channel.is_empty() && system_commands_channel.is_empty() {  
-                            // inform the process that the register might be idle
-                            request_suicide.send(sector_idx).unwrap();
-
-                            /*
-                            the load of channels might change before the process reads the suicide request,
-                            even after checking the emptiness and before sending the request
-                             */
-                            let confirmation = has_process_received_suicide_note.recv().await;
-                            if let Some(_) = confirmation {
-                                // we reconfirm whether we still don't have work ot do
-                                let are_channels_empty = client_commands_channel.is_empty() && system_commands_channel.is_empty();
-
-                                confirm_whether_register_is_needed.send(are_channels_empty).unwrap();
-
-                                if are_channels_empty {
-                                    // we know we are not needed
-                                    break;
-                                }
-                            }
+                    // after finishing the request - we check the load of channels and inform the process whether we might be needed, then we await the suicide request confirmation
+                    if is_register_going_to_be_killed(&client_commands_channel, &system_commands_channel, &mut has_process_received_suicide_note, &confirm_whether_register_is_needed, &request_suicide, sector_idx).await {
+                            break;
                     }
+                    // if there is a chance that this register is not needed
+                    // if client_commands_channel.is_empty() && system_commands_channel.is_empty() {  
+                    //         // inform the process that the register might be idle
+                    //         request_suicide.send(sector_idx).unwrap();
+
+                    //         /*
+                    //         the load of channels might change before the process reads the suicide request,
+                    //         even after checking the emptiness and before sending the request
+                    //          */
+                    //         let confirmation = has_process_received_suicide_note.recv().await;
+                    //         if let Some(_) = confirmation {
+                    //             // we reconfirm whether we still don't have work ot do
+                    //             let are_channels_empty = client_commands_channel.is_empty() && system_commands_channel.is_empty();
+
+                    //             confirm_whether_register_is_needed.send(are_channels_empty).unwrap();
+
+                    //             if are_channels_empty {
+                    //                 // we know we are not needed
+                    //                 break;
+                    //             }
+                    //         }
+                    // }
                 }
             }
 
@@ -426,6 +460,9 @@ async fn handle_atomic_register(mut client_commands_channel: ClientMsgCallbackRe
                     atomic_register.system_command(system_command).await;
                 }
 
+                if is_register_going_to_be_killed(&client_commands_channel, &system_commands_channel, &mut has_process_received_suicide_note, &confirm_whether_register_is_needed, &request_suicide, sector_idx).await {
+                    break;
+                }
             }
         }
     }
