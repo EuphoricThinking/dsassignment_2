@@ -124,11 +124,9 @@ fn get_sector_idx_from_filename(sector_path: &PathBuf) -> u64 {
     return 0;
 }
 
-fn is_read_request(command: &RegisterCommand) -> bool {
-    if let RegisterCommand::Client(ClientRegisterCommand{header: _, content}) = command {
-        if let ClientRegisterCommandContent::Read = content {
-            return true;
-        }
+fn is_read_request(content: &ClientRegisterCommandContent) -> bool {
+    if let ClientRegisterCommandContent::Read = content {
+        return true;
     }
 
     false
@@ -609,8 +607,7 @@ async fn process_connection(socket: TcpStream, addr: SocketAddr, error_sender: U
     }
 }
 
-fn create_empty_read_operation_success(command: &ClientRegisterCommand, client_response_sender: ClientResponseSender) {
-    let ClientRegisterCommand{header, ..} = command;
+fn create_empty_read_operation_success(header: &ClientCommandHeader) -> OperationSuccess {
 
     let zeroed_vec = vec![0; CONTENT_SIZE];
     let zeroed_secor = SectorVec(zeroed_vec);
@@ -619,6 +616,16 @@ fn create_empty_read_operation_success(command: &ClientRegisterCommand, client_r
         request_identifier: header.request_identifier,
         op_return: OperationReturn::Read(ReadReturn { read_data: zeroed_secor })
     };
+
+    operation_success
+}
+
+fn is_sector_written(register_map: &HashMap<SectorIdx, JoinHandle<()>>, already_written_sectors: &HashSet<SectorIdx>, sector_idx: SectorIdx) -> bool {
+    /*
+    already written sectors include sectors with dst files after recovery
+    and indices of sectors to which has been assigned registers which were deactivated. Assuming that a register is created to read from an already written sector or to write to a sector, the register map might indicate that the sector is probably being modified if it has not been already marked as written.
+     */
+    unimplemented!()
 }
 
 
@@ -657,7 +664,9 @@ Process delegates the tasks to registers
 
 The bottleneck is single queue for incoming messages. Since AtomicRegisters should be created dynamically, the HashMap containing currently working registers might be read and modified at the same time. This would suggest using readers-writers solution; however, the readers and writers don't know their roles (they would need to check the HashMap content). Sharing the HashMap would require using Mutex, which could block the worker. However, sending a message to an unbound channel is a non-blocking operation. Additionally, the process might serve the requests constantly, without waiting for resources, while handlers for connection might process another incoming messages.
 
+Handling read requests for empty sectors
 
+There is a possibility to introduce a set of already written sectors, initialized after systems recovery with the indices of sectors where a correct dst can be found. Additionally, after deactivation of the register we could assume then that registers are created only for reading from already written sectors or in for writing to the sectors, therefore during the deactivation the sector idx of the deactivated register might be recorded in the mentioned set. Therefore the content of the map with currenlty running registers, together with the content of the constantly updated set of the already written sectors, could provide information whether we can immediately send zeroed SectorVec. However, there is a possibility that the process might have crashed just before executing the first WRITE_PROC for the given sector and after recovery, it receives READ request from client, before a stubborn link resends WRITE_PROC. However, running an instance of NN-AtomicRegister algorithm would enable the recovered process to update the sectors content. Therefore registers should be created even in case of issuing READ command on a sector which seems to be empty for a given process. Therefore there could be more active registers than already written sectors.
 */
 pub async fn run_register_process(config: Configuration) {
     let (host, port) = get_own_number_in_tcp_ports(config.public.self_rank, &config.public.tcp_locations);
@@ -708,13 +717,18 @@ pub async fn run_register_process(config: Configuration) {
                     if let RegisterCommand::Client(ClientRegisterCommand{
                         header: client_header,
                         content: client_content,
-                    }) = rg_command {
+                    }) = &rg_command {
+                        if is_read_request(&client_content) {
 
+                        }
                     }
                     
                     if let RegisterCommand::System(SystemRegisterCommand{
-                        header: system
-                    })
+                        header: system_header,
+                        content: system_content,
+                    }) = &rg_command {
+
+                    }
                 }
             }
         }
