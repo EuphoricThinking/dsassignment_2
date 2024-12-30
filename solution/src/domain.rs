@@ -109,6 +109,8 @@ pub enum SystemRegisterCommandContent {
     Ack,
 }
 
+
+#[repr(u8)]
 #[derive (Debug, Clone, PartialEq, Eq)]
 pub enum SystemCommandType {
     ReadProc,

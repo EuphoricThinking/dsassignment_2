@@ -44,7 +44,7 @@ type MessagesToDelegate = (RegisterCommand, Option<ClientResponseSender>);
 type MessagesToSectorsSender = UnboundedSender<MessagesToDelegate>;
 type MessagesToSectorsReceiver = UnboundedSender<MessagesToDelegate>;
 
-type RetransmitionMap = HashMap<SectorIdx, SystemRegisterCommand>;
+type RetransmissionMap = HashMap<SectorIdx, SystemRegisterCommand>;
 type AckRetransmitMap = HashMap<Uuid, RegisterCommand>;
 
 type SuccessCallback = Box<
@@ -178,7 +178,7 @@ fn get_request_id_from_client_register_command(rg_command: &RegisterCommand) -> 
 }
 
 fn get_system_command_type_enum(command: &RegisterCommand) -> SystemCommandType {
-    if let RegisterCommand::System(SystemRegisterCommand{header, content}) = command {
+    if let RegisterCommand::System(SystemRegisterCommand{header: _, content}) = command {
         if let SystemRegisterCommandContent::ReadProc = &content {
             return SystemCommandType::ReadProc
         }
@@ -1866,7 +1866,7 @@ impl ProcessRegisterClient{
         // unimplemented!()
     }
 
-    fn is_ack_from_readreturn_with_get_msg_ident(command: &RegisterClientMessage, messages: &RetransmitionMap, self_rank: u8) -> (bool, Uuid) {
+    fn is_ack_from_readreturn_with_get_msg_ident(command: &RegisterClientMessage, messages: &RetransmissionMap, self_rank: u8) -> (bool, Uuid) {
         // if let RegisterCommand::System(SystemRegisterCommand{header, content}) = command {
             let SystemRegisterCommand{header, content} = command.as_ref();
 
@@ -1940,6 +1940,48 @@ impl ProcessRegisterClient{
         header.sector_idx
     }
 
+    fn is_my_request(command: &RegisterClientMessage) -> bool {
+        let SystemRegisterCommand{header: _, content} = command.as_ref();
+
+        match content {
+            &SystemRegisterCommandContent::ReadProc => true,
+            &SystemRegisterCommandContent::WriteProc{..} => true,
+            _ => false
+        }
+        // false
+    }
+
+    fn get_systemcommand_enum_val(command_content: &SystemRegisterCommandContent) -> u8 {
+        match command_content {
+            SystemRegisterCommandContent::Ack => SystemCommandType::Ack as u8,
+            SystemRegisterCommandContent::ReadProc => SystemCommandType::ReadProc as u8,
+            SystemRegisterCommandContent::Value { .. } => SystemCommandType::Value as u8,
+            SystemRegisterCommandContent::WriteProc { .. } => SystemCommandType::WriteProc as u8,
+        }
+    }
+
+    // applies to filtering the messages when our process issues a reply
+    // and is not an initiating side (is not executing a client request)
+    fn is_new_message_from_older_phase(command: &RegisterClientMessage, stored_to_retransmit: &RetransmissionMap) -> bool {
+        let SystemRegisterCommand{header, content} = command.as_ref();
+
+        let msg_for_sector_old = stored_to_retransmit.get(&header.sector_idx);
+
+        match msg_for_sector_old {
+            None => return false,
+            Some(old_msg) => {
+                if old_msg.header.msg_ident == header.msg_ident {
+                    let stored_msg_phase = ProcessRegisterClient::get_systemcommand_enum_val(&old_msg.content);
+                    let new_message_phase = ProcessRegisterClient::get_systemcommand_enum_val(&content);
+
+                    return new_message_phase < stored_msg_phase;
+                }
+            }   
+        }
+        // false
+        unimplemented!()
+    }
+
     // fn remove_unnecessary_msg_from_to_be_sent_set(response: RegisterCommand,
     // messages: &mut RetransmitionMap) {
     //     // delete messages if either of the processes proceeds
@@ -1986,10 +2028,10 @@ impl ProcessRegisterClient{
         */
 
         // TODO set as none op_id
-        let mut initiated_messages_to_be_resent: RetransmitionMap = HashMap::new();
+        let mut initiated_messages_to_be_resent: RetransmissionMap = HashMap::new();
         // acks to be resent in case of readreturn
         let mut acks_to_be_resent: AckRetransmitMap = HashMap::new();
-        let mut replies_to_be_resent: RetransmitionMap = HashMap::new();
+        let mut replies_to_be_resent: RetransmissionMap = HashMap::new();
 
         // let mut connection_error_to_be_resent: Vec<RegisterCommand> = Vec::new();
 
