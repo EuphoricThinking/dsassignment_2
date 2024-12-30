@@ -47,6 +47,13 @@ type MessagesToDelegate = (RegisterCommand, Option<ClientResponseSender>);
 type MessagesToSectorsSender = UnboundedSender<MessagesToDelegate>;
 type MessagesToSectorsReceiver = UnboundedSender<MessagesToDelegate>;
 
+type ClientMsgCallback = (ClientRegisterCommand, SuccessCallback);
+type ClientMsgCallbackReceiver = UnboundedReceiver<ClientMsgCallback>;
+type ClientMsgCallbackSender = UnboundedSender<ClientMsgCallback>;
+
+type SystemCommandSender = UnboundedSender<SystemRegisterCommand>;
+type SystemCommandReceiver = UnboundedReceiver<SystemRegisterCommand>;
+
 type RetransmissionMap = HashMap<SectorIdx, SystemRegisterCommand>;
 type AckRetransmitMap = HashMap<Uuid, RegisterCommand>;
 
@@ -352,6 +359,64 @@ async fn create_a_closure(client_response_sender: ClientResponseSender, sector_i
     // unimplemented!()
 }
 
+/*
+When a channel sends sector idx via suicide_channel in order to signal that 
+it might be idle, it might have received new messages
+
+
+*/
+async fn handle_atomic_register(mut client_commands_channel: ClientMsgCallbackReceiver, mut system_commands_channel: SystemCommandReceiver, is_request_completed: Arc<AtomicBool>, mut has_process_received_suicide_note: UnboundedReceiver<bool>, confirm_whether_register_is_needed: UnboundedSender<bool>, mut atomic_register: RegisterPerSector, request_suicide: UnboundedSender<SectorIdx>, sector_idx: SectorIdx) {
+
+    loop {
+        tokio::select! {
+            client_msg = client_commands_channel.recv() => {
+                // Read or write - initiate the process of request completion
+                if let Some((client_command, callback)) = client_msg {
+                    atomic_register.client_command(client_command, callback).await;
+
+                    // broadcast requests or answer to request from other processes
+                    while !is_request_completed.load(Ordering::Relaxed) {
+                        let system_msg = system_commands_channel.recv().await;
+
+                        if let Some(system_command) = system_msg {
+                            atomic_register.system_command(system_command).await;
+                        }
+                    }
+
+                    // restore the value
+                    is_request_completed.store(false, Ordering::Relaxed);
+                    // if there is a chance that this register is not needed
+                    if client_commands_channel.is_empty() && system_commands_channel.is_empty() {  
+                            // inform the process that the register might be idle
+                            request_suicide.send(sector_idx).unwrap();
+
+                            /*
+                            the load of channels might change before the process reads the suicide request,
+                            even after checking the emptiness and before sending the request
+                             */
+                            let confirmation = has_process_received_suicide_note.recv().await;
+                            if let Some(_) = confirmation {
+                                // we reconfirm whether we still don't have work ot do
+                                let are_channels_empty = client_commands_channel.is_empty() && system_commands_channel.is_empty();
+
+                                confirm_whether_register_is_needed.send(are_channels_empty).unwrap();
+
+                                if are_channels_empty {
+                                    // we know we are not needed
+                                    break;
+                                }
+                            }
+                    }
+                }
+            }
+
+            system_msg = system_commands_channel.recv() => {
+
+            }
+        }
+    }
+}
+
 
 fn is_msg_an_ACK(command: &RegisterCommand) -> bool {
     if let RegisterCommand::System(SystemRegisterCommand{header, content}) = &command {
@@ -563,7 +628,7 @@ pub mod atomic_register_public {
     }
 
 
-    struct RegisterPerSector {
+    pub struct RegisterPerSector {
         callback: Option<Box<
         dyn FnOnce(OperationSuccess) -> Pin<Box<dyn Future<Output = ()> + Send>>
             + Send
