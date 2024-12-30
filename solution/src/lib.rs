@@ -44,7 +44,7 @@ type MessagesToDelegate = (RegisterCommand, Option<ClientResponseSender>);
 type MessagesToSectorsSender = UnboundedSender<MessagesToDelegate>;
 type MessagesToSectorsReceiver = UnboundedSender<MessagesToDelegate>;
 
-type RetransmitionMap = HashMap<SectorIdx, RegisterCommand>;
+type RetransmitionMap = HashMap<SectorIdx, SystemRegisterCommand>;
 type AckRetransmitMap = HashMap<Uuid, RegisterCommand>;
 
 type SuccessCallback = Box<
@@ -53,8 +53,9 @@ dyn FnOnce(OperationSuccess) -> Pin<Box<dyn Future<Output = ()> + Send>>
     + Sync,
 >;
 
-type RegisterClientSender = UnboundedSender<Arc<SystemRegisterCommand>>;
-type RegisterClientReceiver = UnboundedReceiver<Arc<SystemRegisterCommand>>;
+type RegisterClientSender = UnboundedSender<RegisterClientMessage>;
+type RegisterClientReceiver = UnboundedReceiver<RegisterClientMessage>;
+type RegisterClientMessage = Arc<SystemRegisterCommand>;
 
 struct ConnectionData {
     host: String,
@@ -141,6 +142,7 @@ fn get_sector_idx_from_command(rg_command: &RegisterCommand) -> SectorIdx {
         }
     }
 }
+
 
 fn is_sector_idx_valid(sector_idx: SectorIdx, n_sectors: u64) -> bool {
     // let sector_idx = get_sector_idx_from_command(rg_command);
@@ -1838,7 +1840,7 @@ struct ProcessRegisterClient {
     // indices in vectors indicate the corresponding process
     // tcp_locations: Arc<Vec<(String, u16)>>,
     // messages to be sent to the processes
-    messages_to_processes: Arc<Vec<RCommandSender>>,
+    messages_to_processes: Arc<Vec<RegisterClientSender>>,
     // if connection receives a message regarding a particular register
     ack_channels: Arc<Vec<RCommandSender>>,
     // task implementing StubbornLinks for connection management
@@ -1864,8 +1866,9 @@ impl ProcessRegisterClient{
         // unimplemented!()
     }
 
-    fn is_ack_from_readreturn_with_get_msg_ident(command: &RegisterCommand, messages: &RetransmitionMap, self_rank: u8) -> (bool, Uuid) {
-        if let RegisterCommand::System(SystemRegisterCommand{header, content}) = command {
+    fn is_ack_from_readreturn_with_get_msg_ident(command: &RegisterClientMessage, messages: &RetransmitionMap, self_rank: u8) -> (bool, Uuid) {
+        // if let RegisterCommand::System(SystemRegisterCommand{header, content}) = command {
+            let SystemRegisterCommand{header, content} = command.as_ref();
 
             // TODO NO
             if self_rank == header.process_identifier 
@@ -1877,41 +1880,64 @@ impl ProcessRegisterClient{
                         let last_command = messages.get(&header.sector_idx);
 
                         if let Some(msg) = last_command {
-                            if let RegisterCommand::System(SystemRegisterCommand{header: rc_header, content: rc_content}) = msg {
+                             let SystemRegisterCommand{header: rc_header, content: rc_content} = msg;
 
                                 if let SystemRegisterCommandContent::WriteProc { .. } = rc_content {
                                     // we were the process which finished the request and does not need any further acks
                                     return (true, rc_header.msg_ident);
                                 }
-                            }
+                            // }
                         }
                     // }
                 }
-            }
+            // }
         }
 
         (false, Uuid::nil())
     }
 
-    fn get_command_with_updated_msg_ident(command: RegisterCommand, msg_ident: Uuid) -> RegisterCommand {
-        if let RegisterCommand::System(SystemRegisterCommand{header, ..}) = command {
-            return RegisterCommand::System(SystemRegisterCommand{
-                header: SystemCommandHeader { process_identifier: header.process_identifier, msg_ident: msg_ident, sector_idx: header.sector_idx },
-                content: SystemRegisterCommandContent::Ack,
-            });
-        }
+    fn get_command_with_updated_msg_ident(command: &RegisterClientMessage, msg_ident: Uuid) -> RegisterCommand {
+        let SystemRegisterCommand{header, ..} = command.as_ref();
 
-        command
+        return RegisterCommand::System(SystemRegisterCommand{
+            header: SystemCommandHeader { process_identifier: header.process_identifier, msg_ident: msg_ident, sector_idx: header.sector_idx },
+            content: SystemRegisterCommandContent::Ack,
+        });
     }
 
-    fn is_message_to_itself(self_rank: u8, command: &RegisterCommand) -> bool {
-        if let RegisterCommand::System(SystemRegisterCommand{header, ..}) = command {
-            if header.process_identifier == self_rank {
+    fn is_message_to_itself(self_rank: u8, command: &RegisterClientMessage) -> bool {
+        let SystemRegisterCommand{header, ..} = command.as_ref(); 
+
+        if header.process_identifier == self_rank {
                 return true;
-            }
         }
 
         false
+    }
+
+    fn is_arced_msg_an_ACK(command: &RegisterClientMessage) -> bool {
+        let SystemRegisterCommand{header: _, content} = command.as_ref();
+        if let SystemRegisterCommandContent::Ack = content {
+            return true;
+        }
+
+        false
+    }
+
+    fn get_arced_msg_uuid(command: &RegisterClientMessage) -> Uuid {
+        let SystemRegisterCommand{header, ..} = command.as_ref();
+
+        header.msg_ident        
+    }
+
+    fn wrap_systemcommand_into_command(command: &SystemRegisterCommand) -> RegisterCommand {
+        RegisterCommand::System(command.clone())
+    }
+
+    fn get_sector_idx_from_arced_systemcommand(command: &RegisterClientMessage) -> SectorIdx {
+        let SystemRegisterCommand{header, ..} = command.as_ref();
+
+        header.sector_idx
     }
 
     // fn remove_unnecessary_msg_from_to_be_sent_set(response: RegisterCommand,
@@ -1932,13 +1958,13 @@ impl ProcessRegisterClient{
     //     }
     // }
 
-    async fn handle_process_connection(tcp_location: (String, u16), mut ack_receiver: RCommandReceiver, mut msg_to_send_receiver: RCommandReceiver, self_rank: u8, self_msg_sender: MessagesToSectorsSender, hmac_system_key: Vec<u8>) {
+    async fn handle_process_connection(tcp_location: (String, u16), mut ack_receiver: RCommandReceiver, mut msg_to_send_receiver: RegisterClientReceiver, self_rank: u8, self_msg_sender: MessagesToSectorsSender, hmac_system_key: Vec<u8>) {
         // todo add_broadcast
 
         let mut retransmition_tick = time::interval(Duration::from_millis(RETRANSMITION_DELAY));
         retransmition_tick.tick().await;
 
-        let mut messages_to_be_resent: RetransmitionMap = HashMap::new();
+        let mut initiated_messages_to_be_resent: RetransmitionMap = HashMap::new();
         let mut acks_to_be_resent: AckRetransmitMap = HashMap::new();
 
         // let mut connection_error_to_be_resent: Vec<RegisterCommand> = Vec::new();
@@ -1972,15 +1998,15 @@ impl ProcessRegisterClient{
                                     None => {},
                                     Some(command) => {
                                         // we need to retrieve op_id
-                                        let (is_readreturn, msg_ident) = ProcessRegisterClient::is_ack_from_readreturn_with_get_msg_ident(&command, &messages_to_be_resent, self_rank);
+                                        let (is_readreturn, msg_ident) = ProcessRegisterClient::is_ack_from_readreturn_with_get_msg_ident(&command, &initiated_messages_to_be_resent, self_rank);
 
                                         if is_readreturn {
-                                            let updated_command = ProcessRegisterClient::get_command_with_updated_msg_ident(command, msg_ident);
+                                            let updated_command = ProcessRegisterClient::get_command_with_updated_msg_ident(&command, msg_ident);
                                             acks_to_be_resent.insert(msg_ident, updated_command.clone());
 
                                             // remove write_proc from map
                                             // readreturn checks also for write_proc
-                                            messages_to_be_resent.remove(&get_sector_idx_from_command(&updated_command));
+                                            initiated_messages_to_be_resent.remove(&get_sector_idx_from_command(&updated_command));
 
                                             let res = serialize_register_command(&updated_command, &mut stream, &hmac_system_key).await;
 
@@ -2001,12 +2027,14 @@ impl ProcessRegisterClient{
                                             // TODO prepare a separate task,
                                             // since taskhandlers are just ttask handlers in the vector
                                             if ProcessRegisterClient::is_message_to_itself(self_rank, &command) {
-                                                self_msg_sender.send((command, None)).unwrap();
+                                                self_msg_sender.send((RegisterCommand::System(command.as_ref().clone()), None)).unwrap();
                                             }
                                             else {
                                                 // if it is external message - 
-                                                if is_msg_an_ACK(&command) {
-                                                    acks_to_be_resent.insert(get_msg_uuid_if_systemcommand(&command), command.clone());
+                                                if ProcessRegisterClient::is_arced_msg_an_ACK(&command) {
+                                                    // TODO check for external
+
+                                                    // acks_to_be_resent.insert(ProcessRegisterClient::get_arced_msg_uuid(&command), command.as_ref().clone());
                                                 }
                                                 else {
                                                     /*
@@ -2014,9 +2042,9 @@ impl ProcessRegisterClient{
                                                     Therefore, there is no need for explicit message removal
                                                     
                                                     */
-                                                    messages_to_be_resent.insert(get_sector_idx_from_command(&command), command.clone());
+                                                    initiated_messages_to_be_resent.insert(ProcessRegisterClient::get_sector_idx_from_arced_systemcommand(&command), command.as_ref().clone());
                                                 }
-                                                let res = serialize_register_command(&command, &mut stream, &hmac_system_key).await;
+                                                let res = serialize_register_command(&ProcessRegisterClient::wrap_systemcommand_into_command(command.as_ref()), &mut stream, &hmac_system_key).await;
 
                                                 match res {
                                                     Err(_) => {
@@ -2049,8 +2077,8 @@ impl ProcessRegisterClient{
 
                             _ = retransmition_tick.tick() => {
                                 //retransmission tick
-                                for (_, msg) in &messages_to_be_resent {
-                                    let res = serialize_register_command(&msg, &mut stream, &hmac_system_key).await;
+                                for (_, msg) in &initiated_messages_to_be_resent {
+                                    let res = serialize_register_command(&ProcessRegisterClient::wrap_systemcommand_into_command(&msg), &mut stream, &hmac_system_key).await;
                                     match res {
                                         Err(_) => {
                                             // trying to reconnect in order to fix the conection error
@@ -2085,12 +2113,12 @@ impl ProcessRegisterClient{
         self_rank: u8,
         hmac_system_key: Vec<u8>) -> Self {
         // TODO do I need and arc here?
-        let mut msg_to_be_sent: Vec<RCommandSender> = Vec::new();
+        let mut msg_to_be_sent: Vec<RegisterClientSender> = Vec::new();
         let mut ack_channels: Vec<RCommandSender> = Vec::new();
         let mut stubborn_links: Vec<JoinHandle<()>> = Vec::new();
 
         for location in tcp_locations {
-            let (msg_to_send_sender, msg_to_send_receiver) = unbounded_channel::<RegisterCommand>();
+            let (msg_to_send_sender, msg_to_send_receiver) = unbounded_channel::<RegisterClientMessage>();
             let (ack_sender, ack_receiver) = unbounded_channel::<RegisterCommand>();
             
             // TODO for my own process - add only a handler rebouncing the messages
@@ -2130,7 +2158,7 @@ impl RegisterClient for ProcessRegisterClient {
          */
         for sending_channel in self.messages_to_processes.clone().iter() {
             let cloned_channel = sending_channel.clone();
-            cloned_channel.send(msg.cmd);
+            cloned_channel.send(msg.cmd.clone());
         }
         unimplemented!()
     }
