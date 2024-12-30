@@ -662,7 +662,7 @@ async fn handle_connections(listener: TcpListener, config: Arc<ConnectionHandler
 /*
 Process delegates the tasks to registers
 
-The bottleneck is single queue for incoming messages. Since AtomicRegisters should be created dynamically, the HashMap containing currently working registers might be read and modified at the same time. This would suggest using readers-writers solution; however, the readers and writers don't know their roles (they would need to check the HashMap content). Sharing the HashMap would require using Mutex, which could block the worker. However, sending a message to an unbound channel is a non-blocking operation. Additionally, the process might serve the requests constantly, without waiting for resources, while handlers for connection might process another incoming messages.
+The bottleneck is single queue for incoming messages. Since AtomicRegisters should be created dynamically, the HashMap containing currently working registers might be read and modified at the same time (entires might be either added or deleted). This would suggest using readers-writers solution; however, the readers and writers don't know their roles (they would need to check the HashMap content). Sharing the HashMap would require using Mutex, which could block the worker. However, sending a message to an unbound channel is a non-blocking operation. Additionally, the process might serve the requests constantly, without waiting for resources, while handlers for connection might process another incoming messages.
 
 Handling read requests for empty sectors
 
@@ -682,8 +682,13 @@ pub async fn run_register_process(config: Configuration) {
 
     // registers inform the process that they are probably not needed
     let (suicidal_sender, mut suicidal_receiver) = unbounded_channel::<SectorIdx>();
-    let confirm_suicide_note_delivery: SendersMap<u8> = HashMap::new();
-    let get_suicide_final_ack: ReceiverMap<bool> = HashMap::new();
+    // After recevinig the suicidal note - the process sends the delivery confirmation,
+    // indicating that the process expect the register to confirm whether
+    // its queue are still empty
+    let mut confirm_suicide_note_delivery: SendersMap<u8> = HashMap::new();
+    // the register responds to the process confirmation by informing whether
+    // the register is still needed
+    let mut get_suicide_final_ack: ReceiverMap<bool> = HashMap::new();
 
     let processes_count = config.public.tcp_locations.len() as u8;
 
@@ -734,6 +739,13 @@ pub async fn run_register_process(config: Configuration) {
                                     let atomic_register = build_atomic_register(config.public.self_rank, sector_idx, register_client.clone(), sector_manager.clone(), processes_count).await;
 
                                     let atomic_register_handler = tokio::spawn(handle_atomic_register(client_cmd_receiver, system_cmd_receiver, is_request_completed, suicide_note_delivery_confirmation_receiver, suicide_final_ack_from_register_sender, atomic_register, suicidal_sender.clone(), sector_idx));
+
+                                    confirm_suicide_note_delivery.insert(sector_idx, suicide_note_delivery_confirmation_sender);
+                                    get_suicide_final_ack.insert(sector_idx, suicide_final_ack_from_register_receiver);
+                                    client_msg_queues.insert(sector_idx, client_cmd_sender);
+                                    system_msg_queues.insert(sector_idx, system_cmd_sender);
+
+                                    register_handlers.insert(sector_idx, atomic_register_handler);
                                 }
                                 Some(client_sender_per_sector) => {
                                     // The register for the sector already exists - just send the message
