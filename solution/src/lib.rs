@@ -53,6 +53,9 @@ dyn FnOnce(OperationSuccess) -> Pin<Box<dyn Future<Output = ()> + Send>>
     + Sync,
 >;
 
+type RegisterClientSender = UnboundedSender<Arc<SystemRegisterCommand>>;
+type RegisterClientReceiver = UnboundedReceiver<Arc<SystemRegisterCommand>>;
+
 struct ConnectionData {
     host: String,
     addr: u16,
@@ -1864,23 +1867,25 @@ impl ProcessRegisterClient{
     fn is_ack_from_readreturn_with_get_msg_ident(command: &RegisterCommand, messages: &RetransmitionMap, self_rank: u8) -> (bool, Uuid) {
         if let RegisterCommand::System(SystemRegisterCommand{header, content}) = command {
 
-            if self_rank == header.process_identifier {
+            // TODO NO
+            if self_rank == header.process_identifier 
+            && header.msg_ident.is_nil() {
                 if let SystemRegisterCommandContent::Ack = content {
-                    if header.msg_ident.is_nil() {
+                    // if header.msg_ident.is_nil() {
                         // Ack - an arbitrary identifier for ReadReturn
                         // we have to check now if there is WriteProc as the last message to be sent from the register which has finished (as assigned to sectoridx)
                         let last_command = messages.get(&header.sector_idx);
 
                         if let Some(msg) = last_command {
-                            if let RegisterCommand::System(SystemRegisterCommand{header, content}) = msg {
+                            if let RegisterCommand::System(SystemRegisterCommand{header: rc_header, content: rc_content}) = msg {
 
-                                if let SystemRegisterCommandContent::WriteProc { .. } = content {
+                                if let SystemRegisterCommandContent::WriteProc { .. } = rc_content {
                                     // we were the process which finished the request and does not need any further acks
-                                    return (true, header.msg_ident);
+                                    return (true, rc_header.msg_ident);
                                 }
                             }
                         }
-                    }
+                    // }
                 }
             }
         }
