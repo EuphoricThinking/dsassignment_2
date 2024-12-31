@@ -117,7 +117,9 @@ pub enum SystemCommandType {
     Value,
     WriteProc,
     Ack,
-    Other
+    Other,
+    ClientWrite, // for debug
+    ClientRead, // for debug
 }
 
 #[derive(Debug, Clone)]

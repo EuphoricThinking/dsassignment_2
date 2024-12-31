@@ -142,9 +142,16 @@ async fn concurrent_operations_on_the_same_sector() {
 
 #[tokio::test]
 #[serial_test::serial]
-#[timeout(40000)]
+#[timeout(40000)]  // 40000
 async fn large_number_of_operations_execute_successfully() {
     // given
+    use log;
+
+    fn init() {
+        let _ = env_logger::builder().is_test(true).try_init();
+    }
+    init();
+
     let port_range_start = 21625;
     let commands_total = 32;
     let config = TestProcessesConfig::new(3, port_range_start);
