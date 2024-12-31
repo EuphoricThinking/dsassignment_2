@@ -20,7 +20,7 @@ use tokio::sync::mpsc::{self, unbounded_channel, UnboundedReceiver, UnboundedSen
 use std::sync::Arc;
 use std::pin::Pin;
 use std::future::Future;
-use std::marker::Send;
+// use std::marker::Send;
 
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
@@ -63,8 +63,8 @@ type RetransmissionMap = HashMap<SectorIdx, SystemRegisterCommand>;
 type AckRetransmitMap = HashMap<Uuid, RegisterCommand>;
 
 type SuccessCallback = Box<
-dyn FnOnce(OperationSuccess) -> Pin<Box<dyn Future<Output = ()> + Send>>
-    + Send
+dyn FnOnce(OperationSuccess) -> Pin<Box<dyn Future<Output = ()> + std::marker::Send>>
+    + std::marker::Send
     + Sync,
 >;
 
@@ -576,7 +576,7 @@ async fn process_connection(socket: TcpStream, addr: SocketAddr, error_sender: U
 
                     if from another process -> send to register client, in order to note which messages have been confirmed
                     */
-                    if let RegisterCommand::Client(ClientRegisterCommand{header, content}) = &command {
+                    if let RegisterCommand::Client(_) = &command {
                         // let closure = create_a_closure(response_msg_sender.clone(), config.suicide_sender.clone(), header.sector_idx).await;
 
                         config.msg_sender.send((command, Some(response_msg_sender.clone()))).unwrap();
@@ -817,7 +817,7 @@ pub async fn run_register_process(config: Configuration) {
         }
     }
     
-    unimplemented!()
+    // unimplemented!()
 }
 
 pub mod atomic_register_public {
@@ -1510,14 +1510,14 @@ pub mod sectors_manager_public {
                 return SectorVec(empty_vec);
             }
 
-            pub fn get_already_written_sectorsafter_recovery(&mut self) -> HashSet<u64>{
-                // return self.sectors_written_after_recovery.clone();
-                let sectors_res = self.sectors_written_after_recovery.take();
-                match sectors_res {
-                    None => HashSet::new(),
-                    Some(sectors) => sectors,
-                }
-            }
+            // pub fn get_already_written_sectorsafter_recovery(&mut self) -> HashSet<u64>{
+            //     // return self.sectors_written_after_recovery.clone();
+            //     let sectors_res = self.sectors_written_after_recovery.take();
+            //     match sectors_res {
+            //         None => HashSet::new(),
+            //         Some(sectors) => sectors,
+            //     }
+            // }  // TODO uncomment
             
             // let split_pair: Vec<&str> = filename.split("_").collect();
             // let timestamp: u64 = split_pair[0].parse().unwrap();
@@ -2148,7 +2148,7 @@ impl ProcessRegisterClient{
         let process_rank = get_sender_rank(&msg);
         if process_rank != 0 {
             let ack_channel = self.ack_channels[get_process_idx_in_vec(process_rank)].clone();
-            ack_channel.send(msg);
+            ack_channel.send(msg).unwrap();
         }
         // unimplemented!()
     }
@@ -2202,7 +2202,7 @@ impl ProcessRegisterClient{
     //     false
     // }
 
-    fn is_arced_msg_an_ACK(command: &RegisterClientMessage) -> bool {
+    fn is_arced_msg_an_ack(command: &RegisterClientMessage) -> bool {
         let SystemRegisterCommand{header: _, content} = command.as_ref();
         if let SystemRegisterCommandContent::Ack = content {
             return true;
