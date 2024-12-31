@@ -2192,15 +2192,15 @@ impl ProcessRegisterClient{
         });
     }
 
-    fn is_message_to_itself(self_rank: u8, command: &RegisterClientMessage) -> bool {
-        let SystemRegisterCommand{header, ..} = command.as_ref(); 
+    // fn is_message_to_itself(self_rank: u8, command: &RegisterClientMessage) -> bool {
+    //     let SystemRegisterCommand{header, ..} = command.as_ref(); 
 
-        if header.process_identifier == self_rank {
-                return true;
-        }
+    //     if header.process_identifier == self_rank {
+    //             return true;
+    //     }
 
-        false
-    }
+    //     false
+    // }
 
     fn is_arced_msg_an_ACK(command: &RegisterClientMessage) -> bool {
         let SystemRegisterCommand{header: _, content} = command.as_ref();
@@ -2378,52 +2378,45 @@ impl ProcessRegisterClient{
                                         }
                                         else {
                                             
-                                            if ProcessRegisterClient::is_message_to_itself(self_rank, &command) {
-                                                self_msg_sender.send((RegisterCommand::System(command.as_ref().clone()), None)).unwrap();
+                                            // if it is amessage to the  external process 
+                                            let mut to_be_sent = true;
+
+                                            if ProcessRegisterClient::is_my_request(&command) {
+                                                    /*
+                                                if an entry for a given sector idx already existed, its value is updated, therefore progressing algorithm erases old entries for a given sector
+                                                Therefore, there is no need for explicit message removal
+                                                
+                                                */
+                                                initiated_messages_to_be_resent.insert(ProcessRegisterClient::get_sector_idx_from_arced_systemcommand(&command), command.as_ref().clone());
                                             }
                                             else {
-                                                // if it is amessage to the  external process 
-                                                let mut to_be_sent = true;
-
-                                                if ProcessRegisterClient::is_my_request(&command) {
-                                                     /*
-                                                    if an entry for a given sector idx already existed, its value is updated, therefore progressing algorithm erases old entries for a given sector
-                                                    Therefore, there is no need for explicit message removal
-                                                    
-                                                    */
-                                                    initiated_messages_to_be_resent.insert(ProcessRegisterClient::get_sector_idx_from_arced_systemcommand(&command), command.as_ref().clone());
+                                                // our process just replies
+                                                if ProcessRegisterClient::is_new_message_from_older_phase(&command, &replies_to_be_resent) {
+                                                        to_be_sent = false;
                                                 }
                                                 else {
-                                                    // our process just replies
-                                                   if ProcessRegisterClient::is_new_message_from_older_phase(&command, &replies_to_be_resent) {
-                                                        to_be_sent = false;
-                                                   }
-                                                   else {
-                                                    replies_to_be_resent.insert(ProcessRegisterClient::get_sector_idx_from_arced_systemcommand(&command), command.as_ref().clone());
-                                                   }
-
-                                                   // As we have outlined - only new messgaes related to an older phase should not be stored or saved
-                                                   // we do not store uuid of the messages we reply to, therefore we have to determine it in the stubborn link
+                                                replies_to_be_resent.insert(ProcessRegisterClient::get_sector_idx_from_arced_systemcommand(&command), command.as_ref().clone());
                                                 }
 
-                                                if to_be_sent {
-                                                    let res = serialize_register_command(&ProcessRegisterClient::wrap_systemcommand_into_command(command.as_ref()), &mut stream, &hmac_system_key).await;
+                                                // As we have outlined - only new messgaes related to an older phase should not be stored or saved
+                                                // we do not store uuid of the messages we reply to, therefore we have to determine it in the stubborn link
+                                            }
 
-                                                    match res {
-                                                        Err(_) => {
-                                                            // error in sending, probably reconnection needed
-                                                            // exiting inner loop in order to connect to the socket in the outer loop
-                                                            break;
-                                                        },
-                                                        Ok(_) => {}
-                                                    }
+                                            if to_be_sent {
+                                                let res = serialize_register_command(&ProcessRegisterClient::wrap_systemcommand_into_command(command.as_ref()), &mut stream, &hmac_system_key).await;
+
+                                                match res {
+                                                    Err(_) => {
+                                                        // error in sending, probably reconnection needed
+                                                        // exiting inner loop in order to connect to the socket in the outer loop
+                                                        break;
+                                                    },
+                                                    Ok(_) => {}
                                                 }
                                             }
                                         }
                                     }
                                 }
-                                
-
                             }
 
                             ack_msg = ack_receiver.recv() => {
@@ -2437,6 +2430,8 @@ impl ProcessRegisterClient{
 
                                         let sector_idx = get_sector_idx_from_command(&ack);
 
+                                        // we should have be repliers to this uuid
+                                        // if we receive an ACK for the message we have been replying to - this is an indicator, since we have been the one sending the ACK
                                         let reply_for_sector = replies_to_be_resent.get(&sector_idx);
 
                                         if let Some(stored_msg) = reply_for_sector {
