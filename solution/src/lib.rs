@@ -1279,7 +1279,7 @@ pub mod sectors_manager_public {
         // RWLock to be implemented
         // written_sectors: Arc<Mutex<HashSet<u64>>>,
         hasher: Sha256,
-        sectors_written_after_recovery: Option<HashSet<u64>>,
+        // sectors_written_after_recovery: Option<HashSet<u64>>,
     }
 
     impl ProcessSectorManager {
@@ -1479,25 +1479,25 @@ pub mod sectors_manager_public {
                                                     self.remove_file(&tmp_file_path, &tmp_dir_path).await;
 
 
-                                                    // a new file has been written - 
-                                                    if let Some(_) = &dst_path_res {
-                                                        let sector_idx: u64 = get_sector_idx_from_filename(&sector_path);
+                                                    // // a new file has been written - 
+                                                    // if let Some(_) = &dst_path_res {
+                                                    //     let sector_idx: u64 = get_sector_idx_from_filename(&sector_path);
                         
-                                                        self.sectors_written_after_recovery.get_or_insert_with(HashSet::new).insert(sector_idx);
-                                                    }
+                                                    //     self.sectors_written_after_recovery.get_or_insert_with(HashSet::new).insert(sector_idx);
+                                                    // }
                                                }
 
                                             }
                                         }
                                     }
-                                    else {
-                                        // there isn't a tmp file, but maybe there is a correct dst then
-                                        if let Some(_) = &dst_path_res {
-                                            let sector_idx: u64 = get_sector_idx_from_filename(&sector_path);
+                                    // else {
+                                    //     // there isn't a tmp file, but maybe there is a correct dst then
+                                    //     if let Some(_) = &dst_path_res {
+                                    //         let sector_idx: u64 = get_sector_idx_from_filename(&sector_path);
             
-                                            self.sectors_written_after_recovery.get_or_insert_with(HashSet::new).insert(sector_idx);
-                                        }
-                                    }
+                                    //         self.sectors_written_after_recovery.get_or_insert_with(HashSet::new).insert(sector_idx);
+                                    //     }
+                                    // }
                                 }
                                 // otherwise:
                                 // there might be dst file - should be correct
@@ -1756,7 +1756,7 @@ pub mod sectors_manager_public {
         let mut sector_manager = ProcessSectorManager{
             root_dir: path,
             hasher: Sha256::new(),
-            sectors_written_after_recovery: Some(HashSet::new()),
+            // sectors_written_after_recovery: Some(HashSet::new()),
         };
         sector_manager.recovery().await;
 

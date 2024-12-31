@@ -140,9 +140,10 @@ async fn concurrent_operations_on_the_same_sector() {
     }
 }
 
-#[tokio::test]
+// #[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 10)]
 #[serial_test::serial]
-#[timeout(40000)]  // 40000
+#[timeout(400000)]  // 40000
 async fn large_number_of_operations_execute_successfully() {
     // given
     use log;
@@ -154,7 +155,8 @@ async fn large_number_of_operations_execute_successfully() {
 
     let port_range_start = 21625;
     let commands_total = 32;
-    let config = TestProcessesConfig::new(3, port_range_start);
+    // let config = TestProcessesConfig::new(3, port_range_start);
+    let config = TestProcessesConfig::new(70, port_range_start);
     config.start().await;
     let mut stream = config.connect(2).await;
 
