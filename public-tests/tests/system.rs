@@ -141,7 +141,7 @@ async fn concurrent_operations_on_the_same_sector() {
 }
 
 // #[tokio::test]
-#[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 70)]
 #[serial_test::serial]
 #[timeout(400000)]  // 40000
 async fn large_number_of_operations_execute_successfully() {

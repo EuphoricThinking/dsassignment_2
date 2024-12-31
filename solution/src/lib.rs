@@ -2,7 +2,7 @@ mod domain;
 
 pub use crate::domain::*;
 pub use atomic_register_public::*;
-use bincode::ErrorKind;
+// use bincode::ErrorKind;
 pub use register_client_public::*;
 pub use sectors_manager_public::*;
 use tokio::io::AsyncWriteExt;
@@ -10,13 +10,13 @@ use tokio::net::tcp::OwnedWriteHalf;
 use tokio::task::JoinHandle;
 pub use transfer_public::*;
 
-use std::clone;
+// use std::clone;
 use std::collections::HashMap; //, HashSet};
-use std::path::PathBuf;
+// use std::path::PathBuf;
 use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
 use core::net::SocketAddr;
-use tokio::sync::mpsc::{self, unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use std::sync::Arc;
 use std::pin::Pin;
 use std::future::Future;
@@ -111,17 +111,17 @@ fn get_process_idx_in_vec(process_rank: u8) -> usize {
     return idx as usize;
 }
 
-fn get_sector_idx_from_filename(sector_path: &PathBuf) -> u64 {
-    if let Some(fname) = sector_path.file_name() {
-        if let Some(str_name) = fname.to_str() {
-            let idx: u64 = str_name.parse().unwrap();
+// fn get_sector_idx_from_filename(sector_path: &PathBuf) -> u64 {
+//     if let Some(fname) = sector_path.file_name() {
+//         if let Some(str_name) = fname.to_str() {
+//             let idx: u64 = str_name.parse().unwrap();
 
-            return idx;
-        }
-    }
+//             return idx;
+//         }
+//     }
 
-    return 0;
-}
+//     return 0;
+// }
 
 // fn is_read_request(content: &ClientRegisterCommandContent) -> bool {
 //     if let ClientRegisterCommandContent::Read = content {
@@ -1261,7 +1261,7 @@ pub mod atomic_register_public {
 
 pub mod sectors_manager_public {
     use crate::{SectorIdx, SectorVec, CONTENT_SIZE};
-    use std::collections::HashSet;
+    // use std::collections::HashSet;
     use std::path::PathBuf;
     use std::sync::Arc;
     use sha2::{Sha256, Digest};
@@ -1271,7 +1271,7 @@ pub mod sectors_manager_public {
     // use uuid::timestamp;
     // use std::io::Error;
     // use std::ffi::OsStr;
-    use crate::get_sector_idx_from_filename;
+    // use crate::get_sector_idx_from_filename;
 
     
     struct ProcessSectorManager {
@@ -2371,7 +2371,7 @@ impl ProcessRegisterClient{
             let tcp_connect_result = TcpStream::connect(&tcp_location).await;
 
             match tcp_connect_result {
-                Err(msg) => {//log::debug!("error in stubborn link {}", msg.to_string());
+                Err(_) => {//log::debug!("error in stubborn link {}", msg.to_string());
                     continue},
                 Ok(mut stream) => {
                     loop {
@@ -2618,11 +2618,11 @@ impl RegisterClient for ProcessRegisterClient {
 
         // TODO separate channel for broadcast?
          */
-        let mut counter = 0;
+        // let mut counter = 0;
         for sending_channel in self.messages_to_processes.clone().iter() {
             let cloned_channel = sending_channel.clone();
             //log::info!("sending to {} from {}", counter, self._self_rank);
-            counter += 1;
+            // counter += 1;
             cloned_channel.send(msg.cmd.clone()).unwrap();
         }
         // unimplemented!()
