@@ -2377,11 +2377,7 @@ impl ProcessRegisterClient{
                                             }
                                         }
                                         else {
-                                            // just send a message
-                                            // if it is internal message -
-                                            // return to the main message channel
-                                            // TODO prepare a separate task,
-                                            // since taskhandlers are just ttask handlers in the vector
+                                            
                                             if ProcessRegisterClient::is_message_to_itself(self_rank, &command) {
                                                 self_msg_sender.send((RegisterCommand::System(command.as_ref().clone()), None)).unwrap();
                                             }
@@ -2492,23 +2488,25 @@ impl ProcessRegisterClient{
         }
     }
 
-    async fn handle_connection_to_itself(mut msg_to_send_receiver: RegisterClientReceiver, mut ack_receiver: UnboundedReceiver<RegisterCommand>, send_to_itself: MessagesToSectorsSender) {
+    async fn handle_connection_to_itself(mut msg_to_send_receiver: RegisterClientReceiver, send_to_itself: MessagesToSectorsSender) {
+        /*
+        if readreturn received - it will be discarded byt due to incorrect 
+        // just send a message
+        // if it is internal message -
+        // return to the main message channel
+        // TODO prepare a separate task,
+        // since taskhandlers are just ttask handlers in the vector
+         */
         loop {
-            tokio::select! {
-                msg = msg_to_send_receiver.recv() => {
+            let msg = msg_to_send_receiver.recv().await; 
                     if let Some(msg_to_itself) = msg {
-                        let command = ProcessRegisterClient::wrap_systemcommand_into_command(msg_to_itself.as_ref());
-                        send_to_itself.send((command, None)).unwrap();
+                        // readreturn ack is not needed
+                        if !msg_to_itself.header.msg_ident.is_nil() {
+                            let command = ProcessRegisterClient::wrap_systemcommand_into_command(msg_to_itself.as_ref());
+                            send_to_itself.send((command, None)).unwrap();
+                        }
                     }
-                }
-
-                _ = ack_receiver.recv() => {
-                    // We are the process which finished the task,
-                    // we don't need 
-
-                    // we should only await our messages
-                }
-            }
+                
         }
     }
 
@@ -2519,17 +2517,29 @@ impl ProcessRegisterClient{
         let mut msg_to_be_sent: Vec<RegisterClientSender> = Vec::new();
         let mut ack_channels: Vec<RCommandSender> = Vec::new();
         let mut stubborn_links: Vec<JoinHandle<()>> = Vec::new();
+        let self_location = get_process_idx_in_vec(self_rank);
 
-        for location in tcp_locations {
+        for (idx, location) in tcp_locations.iter().enumerate() {
             let (msg_to_send_sender, msg_to_send_receiver) = unbounded_channel::<RegisterClientMessage>();
             let (ack_sender, ack_receiver) = unbounded_channel::<RegisterCommand>();
-            
-            // TODO for my own process - add only a handler rebouncing the messages
-            let stubborn_link = tokio::spawn(ProcessRegisterClient::handle_process_connection(location, ack_receiver, msg_to_send_receiver, self_rank, messages_to_itself_sender.clone(), hmac_system_key.clone()));
+
+            if idx == self_location {
+                 // for my own process - add only a handler rebouncing the messages
+                let link_to_itself = tokio::spawn(ProcessRegisterClient::handle_connection_to_itself(msg_to_send_receiver, messages_to_itself_sender.clone()));
+
+                stubborn_links.push(link_to_itself);
+
+                // TODO check
+                // ack_receiver is not needed
+            }
+            else {
+                let stubborn_link = tokio::spawn(ProcessRegisterClient::handle_process_connection(location.clone(), ack_receiver, msg_to_send_receiver, self_rank, messages_to_itself_sender.clone(), hmac_system_key.clone()));
+
+                stubborn_links.push(stubborn_link);
+            }
 
             msg_to_be_sent.push(msg_to_send_sender);
             ack_channels.push(ack_sender);
-            stubborn_links.push(stubborn_link);
         }
 
         let register_client = ProcessRegisterClient{
