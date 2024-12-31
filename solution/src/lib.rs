@@ -2492,6 +2492,26 @@ impl ProcessRegisterClient{
         }
     }
 
+    async fn handle_connection_to_itself(mut msg_to_send_receiver: RegisterClientReceiver, mut ack_receiver: UnboundedReceiver<RegisterCommand>, send_to_itself: MessagesToSectorsSender) {
+        loop {
+            tokio::select! {
+                msg = msg_to_send_receiver.recv() => {
+                    if let Some(msg_to_itself) = msg {
+                        let command = ProcessRegisterClient::wrap_systemcommand_into_command(msg_to_itself.as_ref());
+                        send_to_itself.send((command, None)).unwrap();
+                    }
+                }
+
+                _ = ack_receiver.recv() => {
+                    // We are the process which finished the task,
+                    // we don't need 
+
+                    // we should only await our messages
+                }
+            }
+        }
+    }
+
     pub async fn new(tcp_locations: Vec<(String, u16)>, messages_to_itself_sender: MessagesToSectorsSender,
         self_rank: u8,
         hmac_system_key: Vec<u8>) -> Self {
