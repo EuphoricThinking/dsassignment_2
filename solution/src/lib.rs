@@ -11,7 +11,7 @@ use tokio::task::JoinHandle;
 pub use transfer_public::*;
 
 use std::clone;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap; //, HashSet};
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
@@ -33,8 +33,6 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 type HmacSha256 = Hmac<Sha256>;
 
-type channel_map<T> = HashMap<SectorIdx, (UnboundedSender<T>, UnboundedReceiver<T>)>;
-
 type SendersMap<T> = HashMap<SectorIdx, UnboundedSender<T>>;
 type ReceiverMap<T> = HashMap<SectorIdx, UnboundedReceiver<T>>;
 type RequestCompletionMap = HashMap<SectorIdx, Arc<AtomicBool>>;
@@ -50,17 +48,17 @@ type RCommandReceiver = UnboundedReceiver<RegisterCommand>;
 type MessagesToDelegate = (RegisterCommand, Option<ClientResponseSender>);
 
 type MessagesToSectorsSender = UnboundedSender<MessagesToDelegate>;
-type MessagesToSectorsReceiver = UnboundedSender<MessagesToDelegate>;
+// type MessagesToSectorsReceiver = UnboundedReceiver<MessagesToDelegate>;
 
 type ClientMsgCallback = (ClientRegisterCommand, SuccessCallback);
 type ClientMsgCallbackReceiver = UnboundedReceiver<ClientMsgCallback>;
-type ClientMsgCallbackSender = UnboundedSender<ClientMsgCallback>;
+// type ClientMsgCallbackSender = UnboundedSender<ClientMsgCallback>;
 
-type SystemCommandSender = UnboundedSender<SystemRegisterCommand>;
+// type SystemCommandSender = UnboundedSender<SystemRegisterCommand>;
 type SystemCommandReceiver = UnboundedReceiver<SystemRegisterCommand>;
 
 type RetransmissionMap = HashMap<SectorIdx, SystemRegisterCommand>;
-type AckRetransmitMap = HashMap<Uuid, RegisterCommand>;
+// type AckRetransmitMap = HashMap<Uuid, RegisterCommand>;
 
 type SuccessCallback = Box<
 dyn FnOnce(OperationSuccess) -> Pin<Box<dyn Future<Output = ()> + std::marker::Send>>
@@ -72,11 +70,11 @@ type RegisterClientSender = UnboundedSender<RegisterClientMessage>;
 type RegisterClientReceiver = UnboundedReceiver<RegisterClientMessage>;
 type RegisterClientMessage = Arc<SystemRegisterCommand>;
 
-struct ConnectionData {
-    host: String,
-    addr: u16,
-    is_active: bool,
-}
+// struct ConnectionData {
+//     host: String,
+//     addr: u16,
+//     is_active: bool,
+// }
 
 struct ConnectionHandlerConfig {
     /// Hmac key to verify and sign internal requests.
@@ -89,7 +87,7 @@ struct ConnectionHandlerConfig {
     // channels to signal the end of client task and possibility of register removal
     // suicide_sender: UnboundedSender<u64>,
     register_client: Arc<ProcessRegisterClient>,
-    self_rank: u8,
+    // self_rank: u8,
 }
 // use hmac::{Hmac, Mac};
 // use sha2::Sha256;
@@ -125,35 +123,35 @@ fn get_sector_idx_from_filename(sector_path: &PathBuf) -> u64 {
     return 0;
 }
 
-fn is_read_request(content: &ClientRegisterCommandContent) -> bool {
-    if let ClientRegisterCommandContent::Read = content {
-        return true;
-    }
+// fn is_read_request(content: &ClientRegisterCommandContent) -> bool {
+//     if let ClientRegisterCommandContent::Read = content {
+//         return true;
+//     }
 
-    false
-}
+//     false
+// }
 
-async fn get_sectors_written_after_recovery(path: &PathBuf) -> HashSet<SectorIdx> {
-    let iterator_dir = tokio::fs::read_dir(path).await;
-    let mut written_sectors: HashSet<SectorIdx> = HashSet::new();
+// async fn get_sectors_written_after_recovery(path: &PathBuf) -> HashSet<SectorIdx> {
+//     let iterator_dir = tokio::fs::read_dir(path).await;
+//     let mut written_sectors: HashSet<SectorIdx> = HashSet::new();
 
-    if let Ok(mut root_iterator) = iterator_dir {
-        while let Ok(Some(sector_entry)) = root_iterator.next_entry().await {
-            let sector_path = sector_entry.path();
-            let sector_iter = tokio::fs::read_dir(&sector_path).await;
-            if let Ok(mut sector_dir) = sector_iter {
-                while let Ok(Some(inside_sector)) = sector_dir.next_entry().await {
-                    if inside_sector.path().is_file() {
-                        let idx = get_sector_idx_from_filename(&sector_path);
-                        written_sectors.insert(idx);
-                    }
-                }
-            }
-        }
-    }
+//     if let Ok(mut root_iterator) = iterator_dir {
+//         while let Ok(Some(sector_entry)) = root_iterator.next_entry().await {
+//             let sector_path = sector_entry.path();
+//             let sector_iter = tokio::fs::read_dir(&sector_path).await;
+//             if let Ok(mut sector_dir) = sector_iter {
+//                 while let Ok(Some(inside_sector)) = sector_dir.next_entry().await {
+//                     if inside_sector.path().is_file() {
+//                         let idx = get_sector_idx_from_filename(&sector_path);
+//                         written_sectors.insert(idx);
+//                     }
+//                 }
+//             }
+//         }
+//     }
 
-    written_sectors
-}
+//     written_sectors
+// }
 
 fn get_sector_idx_from_command(rg_command: &RegisterCommand) -> SectorIdx {
     match rg_command {
@@ -184,40 +182,40 @@ fn get_msg_response_type_from_operation_success(response: &OperationSuccess) -> 
     }
 }
 
-fn get_msg_type_from_client_register_command(rg_command: &RegisterCommand) -> u8 {
-    if let RegisterCommand::Client(ClientRegisterCommand{header: _, content: ClientRegisterCommandContent::Read}) = rg_command {
-        return READ_RESPONSE_STATUS_CODE;
-    }
+// fn get_msg_type_from_client_register_command(rg_command: &RegisterCommand) -> u8 {
+//     if let RegisterCommand::Client(ClientRegisterCommand{header: _, content: ClientRegisterCommandContent::Read}) = rg_command {
+//         return READ_RESPONSE_STATUS_CODE;
+//     }
 
-    return WRITE_RESPONSE_STATUS_CODE;
-}
+//     return WRITE_RESPONSE_STATUS_CODE;
+// }
 
-fn get_request_id_from_client_register_command(rg_command: &RegisterCommand) -> u64 {
-    if let RegisterCommand::Client(ClientRegisterCommand{header, ..}) = rg_command {
-        return header.request_identifier;
-    }
+// fn get_request_id_from_client_register_command(rg_command: &RegisterCommand) -> u64 {
+//     if let RegisterCommand::Client(ClientRegisterCommand{header, ..}) = rg_command {
+//         return header.request_identifier;
+//     }
 
-    return 0;
-}
+//     return 0;
+// }
 
-fn get_system_command_type_enum(command: &RegisterCommand) -> SystemCommandType {
-    if let RegisterCommand::System(SystemRegisterCommand{header: _, content}) = command {
-        if let SystemRegisterCommandContent::ReadProc = &content {
-            return SystemCommandType::ReadProc
-        }
-        else if let SystemRegisterCommandContent::Value { .. } = &content {
-            return SystemCommandType::Value
-        }
-        else if let SystemRegisterCommandContent::WriteProc { .. } = &content {
-            return SystemCommandType::WriteProc
-        }
-        else if let SystemRegisterCommandContent::Ack = &content {
-            return SystemCommandType::Ack
-        }
-    }
+// fn get_system_command_type_enum(command: &RegisterCommand) -> SystemCommandType {
+//     if let RegisterCommand::System(SystemRegisterCommand{header: _, content}) = command {
+//         if let SystemRegisterCommandContent::ReadProc = &content {
+//             return SystemCommandType::ReadProc
+//         }
+//         else if let SystemRegisterCommandContent::Value { .. } = &content {
+//             return SystemCommandType::Value
+//         }
+//         else if let SystemRegisterCommandContent::WriteProc { .. } = &content {
+//             return SystemCommandType::WriteProc
+//         }
+//         else if let SystemRegisterCommandContent::Ack = &content {
+//             return SystemCommandType::Ack
+//         }
+//     }
 
-    SystemCommandType::Other
-}
+//     SystemCommandType::Other
+// }
 
 fn get_msg_uuid_from_systemcommand(command: &SystemRegisterCommand) -> Uuid {
     let SystemRegisterCommand{header, ..} = command;
@@ -485,8 +483,8 @@ async fn handle_atomic_register(mut client_commands_channel: ClientMsgCallbackRe
 }
 
 
-fn is_msg_an_ACK(command: &RegisterCommand) -> bool {
-    if let RegisterCommand::System(SystemRegisterCommand{header, content}) = &command {
+fn is_msg_an_ack(command: &RegisterCommand) -> bool {
+    if let RegisterCommand::System(SystemRegisterCommand{header: _, content}) = &command {
         // expected response after ReadProc
         // if let SystemRegisterCommandContent::Value{..} = &content {
         //     return true;
@@ -520,7 +518,7 @@ fn get_msg_uuid_if_systemcommand(command: &RegisterCommand) -> Uuid {
     Uuid::nil()
 }
 
-async fn process_connection(socket: TcpStream, addr: SocketAddr, error_sender: UnboundedSender<Uuid>, handle_id: Uuid,  config: Arc<ConnectionHandlerConfig>) {
+async fn process_connection(socket: TcpStream, _addr: SocketAddr, error_sender: UnboundedSender<Uuid>, handle_id: Uuid,  config: Arc<ConnectionHandlerConfig>) {
 
     let (response_msg_sender, response_msg_receiver) = unbounded_channel::<(OperationSuccess, StatusCode)>();
 
@@ -591,7 +589,7 @@ async fn process_connection(socket: TcpStream, addr: SocketAddr, error_sender: U
                             // ACK matching old requests will not interfere with the algorithm
                             // however, ACKs are resent in order to inform
                             // about the operation completion
-                            if is_msg_an_ACK(&command) {//&& (config.self_rank != get_sender_rank(&command)) {
+                            if is_msg_an_ack(&command) {//&& (config.self_rank != get_sender_rank(&command)) {
                                 config.register_client.register_response(command.clone());
                             }
                             // }
@@ -609,26 +607,26 @@ async fn process_connection(socket: TcpStream, addr: SocketAddr, error_sender: U
     }
 }
 
-fn create_empty_read_operation_success(header: &ClientCommandHeader) -> OperationSuccess {
+// fn create_empty_read_operation_success(header: &ClientCommandHeader) -> OperationSuccess {
 
-    let zeroed_vec = vec![0; CONTENT_SIZE];
-    let zeroed_secor = SectorVec(zeroed_vec);
+//     let zeroed_vec = vec![0; CONTENT_SIZE];
+//     let zeroed_secor = SectorVec(zeroed_vec);
     
-    let operation_success = OperationSuccess{
-        request_identifier: header.request_identifier,
-        op_return: OperationReturn::Read(ReadReturn { read_data: zeroed_secor })
-    };
+//     let operation_success = OperationSuccess{
+//         request_identifier: header.request_identifier,
+//         op_return: OperationReturn::Read(ReadReturn { read_data: zeroed_secor })
+//     };
 
-    operation_success
-}
+//     operation_success
+// }
 
-fn is_sector_written(register_map: &HashMap<SectorIdx, JoinHandle<()>>, already_written_sectors: &HashSet<SectorIdx>, sector_idx: SectorIdx) -> bool {
-    /*
-    already written sectors include sectors with dst files after recovery
-    and indices of sectors to which has been assigned registers which were deactivated. Assuming that a register is created to read from an already written sector or to write to a sector, the register map might indicate that the sector is probably being modified if it has not been already marked as written.
-     */
-    unimplemented!()
-}
+// fn is_sector_written(register_map: &HashMap<SectorIdx, JoinHandle<()>>, already_written_sectors: &HashSet<SectorIdx>, sector_idx: SectorIdx) -> bool {
+//     /*
+//     already written sectors include sectors with dst files after recovery
+//     and indices of sectors to which has been assigned registers which were deactivated. Assuming that a register is created to read from an already written sector or to write to a sector, the register map might indicate that the sector is probably being modified if it has not been already marked as written.
+//      */
+//     unimplemented!()
+// }
 
 
 async fn handle_connections(listener: TcpListener, config: Arc<ConnectionHandlerConfig>) {
@@ -699,10 +697,10 @@ pub async fn run_register_process(config: Configuration) {
     // messages from clients, other processes and internal
     let (rcommands_sender, mut rcommands_receiver) = unbounded_channel::<MessagesToDelegate>();
 
-    let root_path = config.public.storage_dir.clone();
+    // let root_path = config.public.storage_dir.clone();
     let sector_manager = build_sectors_manager(config.public.storage_dir).await;
     // let sectors_written_after_recovery = sector_manager.get_
-    let sectors_written_after_recovery = get_sectors_written_after_recovery(&root_path).await;
+    // let sectors_written_after_recovery = get_sectors_written_after_recovery(&root_path).await;
     // let connection_tasks: HashMap<(String, u16), JoinHandle<()>> = HashMap::new();
 
     let register_client = Arc::new(ProcessRegisterClient::new(config.public.tcp_locations.clone(), rcommands_sender.clone(),
@@ -711,7 +709,7 @@ pub async fn run_register_process(config: Configuration) {
     // let sectors_manager = build_sectors_manager(config.public.storage_dir).await;
     // TODO remove
 
-    let config_for_connections = Arc::new(ConnectionHandlerConfig{hmac_system_key: config.hmac_system_key, hmac_client_key: config.hmac_client_key, n_sectors: config.public.n_sectors, msg_sender: rcommands_sender.clone(), register_client: register_client.clone(), self_rank: config.public.self_rank});
+    let config_for_connections = Arc::new(ConnectionHandlerConfig{hmac_system_key: config.hmac_system_key, hmac_client_key: config.hmac_client_key, n_sectors: config.public.n_sectors, msg_sender: rcommands_sender.clone(), register_client: register_client.clone()}); // self_rank: config.public.self_rank});
 
     tokio::spawn(handle_connections(listener, config_for_connections.clone()));
 
@@ -1218,17 +1216,16 @@ pub mod atomic_register_public {
 
 pub mod sectors_manager_public {
     use crate::{SectorIdx, SectorVec, CONTENT_SIZE};
-    use std::collections::{HashMap, HashSet};
-    use std::path::{Path, PathBuf};
+    use std::collections::HashSet;
+    use std::path::PathBuf;
     use std::sync::Arc;
-    use hmac::digest::generic_array::{ArrayLength, GenericArray};
     use sha2::{Sha256, Digest};
-    use tokio::fs::{DirEntry, ReadDir, File};
+    use tokio::fs::File;
     use tokio::io::AsyncWriteExt;
-    use tokio::sync::Mutex;
-    use uuid::timestamp;
-    use std::io::Error;
-    use std::ffi::OsStr;
+    // use tokio::sync::Mutex;
+    // use uuid::timestamp;
+    // use std::io::Error;
+    // use std::ffi::OsStr;
     use crate::get_sector_idx_from_filename;
 
     
@@ -1726,12 +1723,12 @@ pub mod sectors_manager_public {
 
 pub mod transfer_public {
     use crate::{ClientCommandHeader, ClientRegisterCommand, ClientRegisterCommandContent, RegisterCommand, SectorVec, SystemCommandHeader, SystemRegisterCommand, SystemRegisterCommandContent, ACK, CONTENT_SIZE, EXTERNAL_UPPER_HALF, MAGIC_NUMBER, PROCESS_CUSTOM_MSG, PROCESS_RESPONSE_ADD, READ_CLIENT_REQ, READ_PROC, VALUE, WRITE_CLIENT_REQ, WRITE_PROC};
-    use std::{alloc::System, io::{Error, ErrorKind}};
+    use std::io::{Error, ErrorKind};  // alloc::System, 
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
     // use hmac::digest::KeyInit;
     use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-    use uuid::timestamp::context;
+    // use uuid::timestamp::context;
 
     // use sha2::Sha256;
     // use hmac::{Hmac, Mac};
@@ -2131,12 +2128,12 @@ struct ProcessRegisterClient {
     // if connection receives a message regarding a particular register
     ack_channels: Arc<Vec<RCommandSender>>,
     // task implementing StubbornLinks for connection management
-    stubborn_links: Arc<Vec<JoinHandle<()>>>,
+    _stubborn_links: Arc<Vec<JoinHandle<()>>>,
     // for redirection of messages sent to itself
-    self_rank: u8,
-    // channel for messages to itself
-    // TODO clone before sending a message?
-    self_msg_sender: MessagesToSectorsSender,
+    // self_rank: u8,
+    // // channel for messages to itself
+    // // TODO clone before sending a message?
+    // self_msg_sender: MessagesToSectorsSender,
 }
 
 impl ProcessRegisterClient{
@@ -2202,20 +2199,20 @@ impl ProcessRegisterClient{
     //     false
     // }
 
-    fn is_arced_msg_an_ack(command: &RegisterClientMessage) -> bool {
-        let SystemRegisterCommand{header: _, content} = command.as_ref();
-        if let SystemRegisterCommandContent::Ack = content {
-            return true;
-        }
+    // fn is_arced_msg_an_ack(command: &RegisterClientMessage) -> bool {
+    //     let SystemRegisterCommand{header: _, content} = command.as_ref();
+    //     if let SystemRegisterCommandContent::Ack = content {
+    //         return true;
+    //     }
 
-        false
-    }
+    //     false
+    // }
 
-    fn get_arced_msg_uuid(command: &RegisterClientMessage) -> Uuid {
-        let SystemRegisterCommand{header, ..} = command.as_ref();
+    // fn get_arced_msg_uuid(command: &RegisterClientMessage) -> Uuid {
+    //     let SystemRegisterCommand{header, ..} = command.as_ref();
 
-        header.msg_ident        
-    }
+    //     header.msg_ident        
+    // }
 
     fn wrap_systemcommand_into_command(command: &SystemRegisterCommand) -> RegisterCommand {
         RegisterCommand::System(command.clone())
@@ -2308,7 +2305,7 @@ impl ProcessRegisterClient{
 
         The further retransmissions of ACKs does not influence the progress of the system, since the operation has been already completed. If some processes do not receive the final ACK from the initiating process, they might resend acks, but they will be ignored, since op_id will be outdated
         */
-    async fn handle_process_connection(tcp_location: (String, u16), mut ack_receiver: RCommandReceiver, mut msg_to_send_receiver: RegisterClientReceiver, self_rank: u8, self_msg_sender: MessagesToSectorsSender, hmac_system_key: Vec<u8>) {
+    async fn handle_process_connection(tcp_location: (String, u16), mut ack_receiver: RCommandReceiver, mut msg_to_send_receiver: RegisterClientReceiver, self_rank: u8,hmac_system_key: Vec<u8>) {
         // todo add_broadcast
 
         let mut retransmition_tick = time::interval(Duration::from_millis(RETRANSMITION_DELAY));
@@ -2528,7 +2525,7 @@ impl ProcessRegisterClient{
                 // ack_receiver is not needed
             }
             else {
-                let stubborn_link = tokio::spawn(ProcessRegisterClient::handle_process_connection(location.clone(), ack_receiver, msg_to_send_receiver, self_rank, messages_to_itself_sender.clone(), hmac_system_key.clone()));
+                let stubborn_link = tokio::spawn(ProcessRegisterClient::handle_process_connection(location.clone(), ack_receiver, msg_to_send_receiver, self_rank, hmac_system_key.clone()));
 
                 stubborn_links.push(stubborn_link);
             }
@@ -2540,9 +2537,9 @@ impl ProcessRegisterClient{
         let register_client = ProcessRegisterClient{
             messages_to_processes: Arc::new(msg_to_be_sent),
             ack_channels: Arc::new(ack_channels),
-            stubborn_links: Arc::new(stubborn_links),
-            self_rank: self_rank,
-            self_msg_sender: messages_to_itself_sender,
+            _stubborn_links: Arc::new(stubborn_links),
+            // self_rank: self_rank,
+            // self_msg_sender: messages_to_itself_sender,
         };
 
         // unimplemented!()
