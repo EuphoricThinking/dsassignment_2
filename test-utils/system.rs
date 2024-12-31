@@ -111,18 +111,24 @@ impl TestProcessesConfig {
     pub async fn read_response(&self, stream: &mut TcpStream) -> Result<RegisterResponse, String> {
         let mut buf = [0; 8];
         stream.read_exact(&mut buf).await.unwrap();
+        log::info!("I have read in read response");
         if &buf[0..4] != MAGIC_NUMBER.as_ref() {
             return Err("Invalid magic number".to_string());
         }
+        log::info!("magic is good");
         let status_code = try_to_status_code(*buf.get(6).unwrap());
+        log::info!("status code is read");
         let msg_type = *buf.get(7).unwrap();
+        log::info!("I got msg type");
         if status_code.is_none() {
             return Err("Invalid status code".to_string());
         }
 
         let status_code = status_code.unwrap();
+        log::info!("unwrapped status code");
         stream.read_exact(&mut buf).await.unwrap();
         let request_number = u64::from_be_bytes(buf);
+        log::info!("I have read request number {}", request_number);
         let header = RegisterResponseHeader {
             status_code,
             request_identifier: request_number,
@@ -130,7 +136,10 @@ impl TestProcessesConfig {
         let mut hmac_tag = [0; HMAC_TAG_SIZE];
         match msg_type {
             66 => {
+                log::info!("Trying to read write");
                 stream.read_exact(&mut hmac_tag).await.unwrap();
+
+                log::info!("I am done with {}", request_number);
                 Ok(RegisterResponse {
                     header,
                     content: RegisterResponseContent::Write,
@@ -138,9 +147,14 @@ impl TestProcessesConfig {
                 })
             }
             65 => {
+                log::info!("Trying to read read");
                 let mut sector = vec![0; 4096];
                 stream.read_exact(&mut sector).await.unwrap();
+                log::info!("read sector data");
                 stream.read_exact(&mut hmac_tag).await.unwrap();
+                log::info!("read hmac tag");
+
+                log::info!("I am done with {}", request_number);
                 Ok(RegisterResponse {
                     header,
                     content: RegisterResponseContent::Read(SectorVec(sector)),
@@ -149,6 +163,7 @@ impl TestProcessesConfig {
             }
             _ => Err(format!("Invalid message type: {}", msg_type)),
         }
+
     }
 
     pub fn assert_response_header(&self, response: &RegisterResponse, cmd: &ClientRegisterCommand) {

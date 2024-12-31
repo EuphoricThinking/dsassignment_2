@@ -198,24 +198,24 @@ fn get_msg_response_type_from_operation_success(response: &OperationSuccess) -> 
 //     return 0;
 // }
 
-// fn get_system_command_type_enum(command: &RegisterCommand) -> SystemCommandType {
-//     if let RegisterCommand::System(SystemRegisterCommand{header: _, content}) = command {
-//         if let SystemRegisterCommandContent::ReadProc = &content {
-//             return SystemCommandType::ReadProc
-//         }
-//         else if let SystemRegisterCommandContent::Value { .. } = &content {
-//             return SystemCommandType::Value
-//         }
-//         else if let SystemRegisterCommandContent::WriteProc { .. } = &content {
-//             return SystemCommandType::WriteProc
-//         }
-//         else if let SystemRegisterCommandContent::Ack = &content {
-//             return SystemCommandType::Ack
-//         }
-//     }
+fn get_system_command_type_enum(command: &RegisterCommand) -> SystemCommandType {
+    if let RegisterCommand::System(SystemRegisterCommand{header: _, content}) = command {
+        if let SystemRegisterCommandContent::ReadProc = &content {
+            return SystemCommandType::ReadProc
+        }
+        else if let SystemRegisterCommandContent::Value { .. } = &content {
+            return SystemCommandType::Value
+        }
+        else if let SystemRegisterCommandContent::WriteProc { .. } = &content {
+            return SystemCommandType::WriteProc
+        }
+        else if let SystemRegisterCommandContent::Ack = &content {
+            return SystemCommandType::Ack
+        }
+    }
 
-//     SystemCommandType::Other
-// }
+    SystemCommandType::Other
+}
 
 fn get_msg_uuid_from_systemcommand(command: &SystemRegisterCommand) -> Uuid {
     let SystemRegisterCommand{header, ..} = command;
@@ -235,7 +235,7 @@ fn serialize_response(response: OperationSuccess, status_code: StatusCode, hmac_
 
     msg.extend_from_slice(&response.request_identifier.to_be_bytes());
 
-    if status_code != StatusCode::Ok {
+    if status_code == StatusCode::Ok {
         if let OperationReturn::Read(ReadReturn { read_data }) = response.op_return {
             let SectorVec(data) = read_data;
             msg.extend_from_slice(&data);
@@ -322,13 +322,16 @@ async fn process_responses_to_clients(mut socket_to_write: OwnedWriteHalf, hmac_
 
         match msg {
             None => {
+                log::info!("ERROR in client connection");
                 error_sender.send(handle_id).unwrap();
             }
             Some((operation_success, status_code)) => {
+                log::info!("completed request: {:?}", operation_success.request_identifier);
                 let reply = serialize_response(operation_success, status_code, &hmac_key);
 
                 let send_res = socket_to_write.write_all(&reply).await;
                 if send_res.is_err() {
+                    log::info!("error in sender");
                     error_sender.send(handle_id).unwrap();
                 }
             }
@@ -669,6 +672,8 @@ Handling read requests for empty sectors
 There is a possibility to introduce a set of already written sectors, initialized after systems recovery with the indices of sectors where a correct dst can be found. Additionally, after deactivation of the register we could assume then that registers are created only for reading from already written sectors or in for writing to the sectors, therefore during the deactivation the sector idx of the deactivated register might be recorded in the mentioned set. Therefore the content of the map with currenlty running registers, together with the content of the constantly updated set of the already written sectors, could provide information whether we can immediately send zeroed SectorVec. However, there is a possibility that the process might have crashed just before executing the first WRITE_PROC for the given sector and after recovery, it receives READ request from client, before a stubborn link resends WRITE_PROC. However, running an instance of NN-AtomicRegister algorithm would enable the recovered process to update the sectors content. Therefore registers should be created even in case of issuing READ command on a sector which seems to be empty for a given process. Therefore there could be more active registers than already written sectors.
 */
 pub async fn run_register_process(config: Configuration) {
+    log::trace!("HEREREEEEE");
+    println!("heereeeeeeeee");
     let (host, port) = get_own_number_in_tcp_ports(config.public.self_rank, &config.public.tcp_locations);
     let address = format!("{}:{}", host, port);
     let listener = TcpListener::bind(address).await.unwrap();
@@ -717,14 +722,19 @@ pub async fn run_register_process(config: Configuration) {
         tokio::select! {
             suicide_note = suicidal_receiver.recv() => {
                 if let Some(suicidal_sector_idx) = suicide_note {
+                    log::debug!("suicide {}", suicidal_sector_idx);
                     // the sector has requested suicide - we have to check whether its queues are still empty after this time
                     let ask_for_confirmation_res = confirm_suicide_note_delivery.get(&suicidal_sector_idx);
                     if let Some(ask_for_confirmation) = ask_for_confirmation_res {
+                        log::debug!("before confirm");
                         ask_for_confirmation.send(1).unwrap();
+                        log::debug!("after confirm");
 
                         let register_final_ack_res = get_suicide_final_ack.get_mut(&suicidal_sector_idx);
                         if let Some(register_final_ack_receiver) = register_final_ack_res {
+                            log::debug!("before final ack");
                             let is_idle_res = register_final_ack_receiver.recv().await;
+                            log::debug!("after final ack");
 
                             if let Some(is_idle) = is_idle_res {
                                 if is_idle {
@@ -740,8 +750,10 @@ pub async fn run_register_process(config: Configuration) {
                                     get_suicide_final_ack.remove(&suicidal_sector_idx);
 
                                     register_handlers.remove(&suicidal_sector_idx);
+                                    log::debug!("is idle: {} removed all", is_idle);
                                 }
                             }
+
                         }
                     }
                 }
@@ -750,6 +762,7 @@ pub async fn run_register_process(config: Configuration) {
             command = rcommands_receiver.recv() => {
                 if let Some((rg_command, option_client_sender)) = command {
                     let sector_idx = get_sector_idx_from_command(&rg_command);
+                    
 
                     let task_handler = register_handlers.get(&sector_idx);
 
@@ -786,6 +799,7 @@ pub async fn run_register_process(config: Configuration) {
 
 
                     if let RegisterCommand::Client(client_command) = &rg_command {
+                        log::debug!("client {:?}, idx {}, type {:?}", client_command.header, sector_idx, get_system_command_type_enum(&rg_command));
                         if let Some(sender) = option_client_sender {
                             let is_request_completed_res = is_request_completed_map.get(&sector_idx);
 
@@ -804,6 +818,8 @@ pub async fn run_register_process(config: Configuration) {
                     
                     if let RegisterCommand::System(system_command
                     ) = &rg_command {
+                        log::debug!("system {:?}, idx {}, type {:?}", system_command.header, sector_idx, get_system_command_type_enum(&rg_command));
+
                         let system_sender_res = system_msg_queues.get(&sector_idx);
 
                         if let Some(system_sender) = system_sender_res {

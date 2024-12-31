@@ -16,6 +16,8 @@ use tokio::net::TcpStream;
 #[timeout(4000)]
 async fn single_process_system_completes_operations() {
     // given
+    // use log::info;
+
     let hmac_client_key = [5; 32];
     let tcp_port = 30_287;
     let storage_dir = tempdir().unwrap();
@@ -74,6 +76,14 @@ async fn single_process_system_completes_operations() {
 #[timeout(30000)]
 async fn concurrent_operations_on_the_same_sector() {
     // given
+    use log::info;
+    println!("starting test");
+
+    fn init() {
+        let _ = env_logger::builder().is_test(true).try_init();
+    }
+    init();
+
     let port_range_start = 21518;
     let n_clients = 16;
     let config = TestProcessesConfig::new(1, port_range_start);
@@ -101,6 +111,8 @@ async fn concurrent_operations_on_the_same_sector() {
     }
 
     for stream in &mut streams {
+        // println!("reading response");
+        // info!("logging");
         config.read_response(stream).await.unwrap();
     }
 
@@ -116,7 +128,9 @@ async fn concurrent_operations_on_the_same_sector() {
             &mut streams[0],
         )
         .await;
+    println!("sending command");
     let response = config.read_response(&mut streams[0]).await.unwrap();
+    println!("read response");
 
     match response.content {
         RegisterResponseContent::Read(SectorVec(sector)) => {
