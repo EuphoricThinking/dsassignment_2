@@ -2,7 +2,6 @@ mod domain;
 
 pub use crate::domain::*;
 pub use atomic_register_public::*;
-// use bincode::ErrorKind;
 pub use register_client_public::*;
 pub use sectors_manager_public::*;
 use tokio::io::AsyncWriteExt;
@@ -10,9 +9,7 @@ use tokio::net::tcp::OwnedWriteHalf;
 use tokio::task::JoinHandle;
 pub use transfer_public::*;
 
-// use std::clone;
-use std::collections::HashMap; //, HashSet};
-// use std::path::PathBuf;
+use std::collections::HashMap;
 use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
 use core::net::SocketAddr;
@@ -20,7 +17,6 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use std::sync::Arc;
 use std::pin::Pin;
 use std::future::Future;
-// use std::marker::Send;
 
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
@@ -48,17 +44,13 @@ type RCommandReceiver = UnboundedReceiver<RegisterCommand>;
 type MessagesToDelegate = (RegisterCommand, Option<ClientResponseSender>);
 
 type MessagesToSectorsSender = UnboundedSender<MessagesToDelegate>;
-// type MessagesToSectorsReceiver = UnboundedReceiver<MessagesToDelegate>;
 
 type ClientMsgCallback = (ClientRegisterCommand, SuccessCallback);
 type ClientMsgCallbackReceiver = UnboundedReceiver<ClientMsgCallback>;
-// type ClientMsgCallbackSender = UnboundedSender<ClientMsgCallback>;
 
-// type SystemCommandSender = UnboundedSender<SystemRegisterCommand>;
 type SystemCommandReceiver = UnboundedReceiver<SystemRegisterCommand>;
 
 type RetransmissionMap = HashMap<SectorIdx, SystemRegisterCommand>;
-// type AckRetransmitMap = HashMap<Uuid, RegisterCommand>;
 
 type SuccessCallback = Box<
 dyn FnOnce(OperationSuccess) -> Pin<Box<dyn Future<Output = ()> + std::marker::Send>>
@@ -70,11 +62,6 @@ type RegisterClientSender = UnboundedSender<RegisterClientMessage>;
 type RegisterClientReceiver = UnboundedReceiver<RegisterClientMessage>;
 type RegisterClientMessage = Arc<SystemRegisterCommand>;
 
-// struct ConnectionData {
-//     host: String,
-//     addr: u16,
-//     is_active: bool,
-// }
 
 struct ConnectionHandlerConfig {
     /// Hmac key to verify and sign internal requests.
@@ -84,19 +71,10 @@ struct ConnectionHandlerConfig {
     n_sectors: u64,
     // messages to be processed by registers
     msg_sender: MessagesToSectorsSender,
-    // channels to signal the end of client task and possibility of register removal
-    // suicide_sender: UnboundedSender<u64>,
     register_client: Arc<ProcessRegisterClient>,
     _self_rank: u8,
 }
-// use hmac::{Hmac, Mac};
-// use sha2::Sha256;
-// use hmac::digest::KeyInit;
 
-// type HmacSha256 = Hmac<Sha256>;
-
-// use hmac::Mac;
-// use hmac::digest::KeyInit;
 
 fn get_own_number_in_tcp_ports(self_rank: u8, tcp_locations: &Vec<(String, u16)>) -> (String, u16) {
     let self_idx = self_rank.saturating_sub(1);
@@ -111,48 +89,6 @@ fn get_process_idx_in_vec(process_rank: u8) -> usize {
     return idx as usize;
 }
 
-// fn get_sector_idx_from_filename(sector_path: &PathBuf) -> u64 {
-//     if let Some(fname) = sector_path.file_name() {
-//         if let Some(str_name) = fname.to_str() {
-//             let idx: u64 = str_name.parse().unwrap();
-
-//             return idx;
-//         }
-//     }
-
-//     return 0;
-// }
-
-// fn is_read_request(content: &ClientRegisterCommandContent) -> bool {
-//     if let ClientRegisterCommandContent::Read = content {
-//         return true;
-//     }
-
-//     false
-// }
-
-// async fn get_sectors_written_after_recovery(path: &PathBuf) -> HashSet<SectorIdx> {
-//     let iterator_dir = tokio::fs::read_dir(path).await;
-//     let mut written_sectors: HashSet<SectorIdx> = HashSet::new();
-
-//     if let Ok(mut root_iterator) = iterator_dir {
-//         while let Ok(Some(sector_entry)) = root_iterator.next_entry().await {
-//             let sector_path = sector_entry.path();
-//             let sector_iter = tokio::fs::read_dir(&sector_path).await;
-//             if let Ok(mut sector_dir) = sector_iter {
-//                 while let Ok(Some(inside_sector)) = sector_dir.next_entry().await {
-//                     if inside_sector.path().is_file() {
-//                         let idx = get_sector_idx_from_filename(&sector_path);
-//                         written_sectors.insert(idx);
-//                     }
-//                 }
-//             }
-//         }
-//     }
-
-//     written_sectors
-// }
-
 fn get_sector_idx_from_command(rg_command: &RegisterCommand) -> SectorIdx {
     match rg_command {
         RegisterCommand::Client(ClientRegisterCommand{header, ..}) => {
@@ -166,8 +102,6 @@ fn get_sector_idx_from_command(rg_command: &RegisterCommand) -> SectorIdx {
 
 
 fn is_sector_idx_valid(sector_idx: SectorIdx, n_sectors: u64) -> bool {
-    // let sector_idx = get_sector_idx_from_command(rg_command);
-
     return sector_idx < n_sectors;
 }
 
@@ -182,21 +116,6 @@ fn get_msg_response_type_from_operation_success(response: &OperationSuccess) -> 
     }
 }
 
-// fn get_msg_type_from_client_register_command(rg_command: &RegisterCommand) -> u8 {
-//     if let RegisterCommand::Client(ClientRegisterCommand{header: _, content: ClientRegisterCommandContent::Read}) = rg_command {
-//         return READ_RESPONSE_STATUS_CODE;
-//     }
-
-//     return WRITE_RESPONSE_STATUS_CODE;
-// }
-
-// fn get_request_id_from_client_register_command(rg_command: &RegisterCommand) -> u64 {
-//     if let RegisterCommand::Client(ClientRegisterCommand{header, ..}) = rg_command {
-//         return header.request_identifier;
-//     }
-
-//     return 0;
-// }
 
 fn get_system_command_type_enum(command: &RegisterCommand) -> SystemCommandType {
     if let RegisterCommand::System(SystemRegisterCommand{header: _, content}) = &command {
@@ -294,57 +213,22 @@ fn get_error_operation_success(rg_command: RegisterCommand) -> OperationSuccess 
         request_identifier: 0,
         op_return: OperationReturn::Write,
     }
-    // unimplemented!()
 }
 
-// fn serialize_error(request_id_not_converted: u64, status_code: StatusCode, hmac_key: &[u8], msg_response_type: u8) -> Vec<u8> {
-//     let mut msg: Vec<u8> = Vec::new();
-//     msg.extend_from_slice(&MAGIC_NUMBER);
 
-//     let padding: [u8; 2] = [0; 2];
-//     msg.extend_from_slice(&padding);
-
-//     msg.push(status_code as u8);
-//     msg.push(msg_response_type);
-
-//     msg.extend_from_slice(&request_id_not_converted.to_be_bytes());    
-
-//     let mac_res = HmacSha256::new_from_slice(hmac_key);
-                
-//         match mac_res {
-//             Err(_) => {return msg},
-//             Ok(mut mac) => {
-//                 mac.update(&msg);
-//                 let tag = mac.finalize().into_bytes();
-
-//                 msg.extend_from_slice(&tag);
-//             },
-//         }
-
-//     msg
-// }
-
-// async fn respond_to_client_if_error(mut socket: TcpStream, request_id_not_converted: u64, status_code: StatusCode, hmac_key: &[u8], msg_response_type: u8) {
-//     let msg = serialize_error(request_id_not_converted, status_code, hmac_key, msg_response_type);
-//     socket.write_all(&msg).await.unwrap();
-// }
 async fn process_responses_to_clients(mut socket_to_write: OwnedWriteHalf, hmac_key: [u8; 32], mut client_responses_channel: ClientResponseReceiver, error_sender: UnboundedSender<Uuid>, handle_id: Uuid) {
     loop {
         let msg = client_responses_channel.recv().await;
-        //log::info!("received a message");
 
         match msg {
             None => {
-                //log::info!("ERROR in client connection");
                 error_sender.send(handle_id).unwrap();
             }
             Some((operation_success, status_code)) => {
-                println!("completed request: {:?}", operation_success.request_identifier);
                 let reply = serialize_response(operation_success, status_code, &hmac_key);
 
                 let send_res = socket_to_write.write_all(&reply).await;
                 if send_res.is_err() {
-                    //log::info!("error in sender");
                     error_sender.send(handle_id).unwrap();
                 }
             }
@@ -355,14 +239,12 @@ async fn process_responses_to_clients(mut socket_to_write: OwnedWriteHalf, hmac_
 fn create_a_closure(client_response_sender: ClientResponseSender, sector_idx: u64, self_process_id: u8, is_request_completed: Arc<AtomicBool>, register_client: Arc<dyn RegisterClient>) ->  SuccessCallback {
     Box::new(move |success: OperationSuccess| {
         Box::pin(async move {
-            client_response_sender.send((success, StatusCode::Ok)).unwrap();
-
-            // TODO change arc to sth simpler
-            
+            client_response_sender.send((success, StatusCode::Ok)).unwrap();            
 
                 /*
                 Messages sent in channels are queued
                 Even if the register starts handling another request, this message will be preceding all the next commands
+                Even if the register would send ack message as a reply to another process' request, this ack would follow the special ACK, therefore we can check whether this is a special ACK and whether our register issued WriteProc
                  */
                 let msg = SystemRegisterCommand{
                     header: SystemCommandHeader{
@@ -383,7 +265,6 @@ fn create_a_closure(client_response_sender: ClientResponseSender, sector_idx: u6
         })
     })
 
-    // unimplemented!()
 }
 
 
@@ -405,11 +286,6 @@ async fn is_register_going_to_be_killed(client_commands_channel: &ClientMsgCallb
             confirm_whether_register_is_needed.send(are_channels_empty).unwrap();
 
             return are_channels_empty;
-            // if are_channels_empty {
-            //     // we know we are not needed and we will be killed
-            //     // break;
-            //     return true;
-            // }
         }
     }
 
@@ -443,7 +319,6 @@ async fn handle_atomic_register(mut client_commands_channel: ClientMsgCallbackRe
             client_msg = client_commands_channel.recv() => {
                 // Read or write - initiate the process of request completion
                 if let Some((client_command, callback)) = client_msg {
-                    //log::trace!("{} I have received a client command {}", sector_idx, client_command.header.request_identifier);
 
                     atomic_register.client_command(client_command, callback).await;
                     // broadcast requests or answer to request from other processes
@@ -455,35 +330,12 @@ async fn handle_atomic_register(mut client_commands_channel: ClientMsgCallbackRe
                         }
                     }
 
-                    //log::trace!("done with CLIENT command {}", sector_idx);
                     // restore the value
                     is_request_completed.store(false, Ordering::Relaxed);
                     // after finishing the request - we check the load of channels and inform the process whether we might be needed, then we await the suicide request confirmation
                     if is_register_going_to_be_killed(&client_commands_channel, &system_commands_channel, &mut has_process_received_suicide_note, &confirm_whether_register_is_needed, &request_suicide, sector_idx).await {
                             break;
                     }
-                    // if there is a chance that this register is not needed
-                    // if client_commands_channel.is_empty() && system_commands_channel.is_empty() {  
-                    //         // inform the process that the register might be idle
-                    //         request_suicide.send(sector_idx).unwrap();
-
-                    //         /*
-                    //         the load of channels might change before the process reads the suicide request,
-                    //         even after checking the emptiness and before sending the request
-                    //          */
-                    //         let confirmation = has_process_received_suicide_note.recv().await;
-                    //         if let Some(_) = confirmation {
-                    //             // we reconfirm whether we still don't have work ot do
-                    //             let are_channels_empty = client_commands_channel.is_empty() && system_commands_channel.is_empty();
-
-                    //             confirm_whether_register_is_needed.send(are_channels_empty).unwrap();
-
-                    //             if are_channels_empty {
-                    //                 // we know we are not needed
-                    //                 break;
-                    //             }
-                    //         }
-                    // }
                 }
             }
 
@@ -492,7 +344,6 @@ async fn handle_atomic_register(mut client_commands_channel: ClientMsgCallbackRe
                     atomic_register.system_command(system_command).await;
                 }
 
-                // //log::info!("done with system command {}", sector_idx); 
                 if is_register_going_to_be_killed(&client_commands_channel, &system_commands_channel, &mut has_process_received_suicide_note, &confirm_whether_register_is_needed, &request_suicide, sector_idx).await {
                     break;
                 }
@@ -504,14 +355,8 @@ async fn handle_atomic_register(mut client_commands_channel: ClientMsgCallbackRe
 
 fn is_msg_an_ack(command: &RegisterCommand) -> bool {
     if let RegisterCommand::System(SystemRegisterCommand{header: _, content}) = &command {
-        // expected response after ReadProc
-        // if let SystemRegisterCommandContent::Value{..} = &content {
-        //     return true;
-        // }
-        // expected response after WriteProc
-
         /*
-        If a process finishes task after as a part of ReadReturn, it resends ACK in order to confirm the completion of the task
+        If a process finishes task as a part of ReadReturn, it resends ACK in order to confirm the completion of the task
          */
         if let SystemRegisterCommandContent::Ack = content{
             return true;
@@ -537,6 +382,9 @@ fn get_msg_uuid_if_systemcommand(command: &RegisterCommand) -> Uuid {
     Uuid::nil()
 }
 
+/*
+Spawn a task for sending replies to clients 
+*/
 async fn process_connection(socket: TcpStream, _addr: SocketAddr, error_sender: UnboundedSender<Uuid>, handle_id: Uuid,  config: Arc<ConnectionHandlerConfig>) {
 
     let (response_msg_sender, response_msg_receiver) = unbounded_channel::<(OperationSuccess, StatusCode)>();
@@ -551,31 +399,22 @@ async fn process_connection(socket: TcpStream, _addr: SocketAddr, error_sender: 
         let deserialize_result = deserialize_register_command(&mut requests_from_clients_socket, &config.hmac_system_key, &config.hmac_client_key).await;
 
         match deserialize_result {
-            Err(ref err) if err.kind() == std::io::ErrorKind::InvalidInput => {
-                // TODO send message to client, serialized with error msg
-            },
-            Err(ref err) if err.kind() == std::io::ErrorKind::Other => {
-                // TODO
-            },
             Err(_) => {
-                // TODO
-                // error in connection - try to send and send as inactive
+                // not specified error handling
+                // not all errors indicate that the connection is closed
             },
             Ok((command, is_hmac_valid)) => {
                 let sector_idx = get_sector_idx_from_command(&command);
 
                 if !is_sector_idx_valid(sector_idx, config.n_sectors) {
-                    // send information about the error
+                    // send information about the error to the client
                     if let RegisterCommand::Client(_) = &command {
-                        // respond_to_client_if_error(socket, get_request_id_from_client_register_command(&command), StatusCode::InvalidSectorIndex, &config.hmac_client_key, get_msg_type_from_client_register_command(&command)).await;
                         let operation_error = get_error_operation_success(command);
-                        // let reply = serialize_response(operation_error, StatusCode::InvalidSectorIndex, &config.hmac_client_key);
-                        // TODO if err -> remove handle
                         response_msg_sender.send((operation_error, StatusCode::InvalidSectorIndex)).unwrap();
                     }
                 }
                 else if !is_hmac_valid {
-                    // send information about error
+                    // send information about an error to the client
                     if let RegisterCommand::Client(_) = &command {
                         let operation_error = get_error_operation_success(command);
                         response_msg_sender.send((operation_error, StatusCode::AuthFailure)).unwrap();
@@ -584,35 +423,23 @@ async fn process_connection(socket: TcpStream, _addr: SocketAddr, error_sender: 
                 else {
                     // correct message - send to channel
 
-                    /*
-                    create a closure for sending responses
-                    channel to queue messages on the socket
-                    no, here I am responsible for serialization, maybe just send here for serialization
-                    RegisterCommand, sector_idx, callback -> if from client
-                    if connected from another process -> RegisterCommand, sector_idx
-                    two separate channels
-
-                    if from another process -> send to register client, in order to note which messages have been confirmed
-                    */
                     if let RegisterCommand::Client(_) = &command {
-                        // let closure = create_a_closure(response_msg_sender.clone(), config.suicide_sender.clone(), header.sector_idx).await;
-
+                        // send a command with a channel to the spawned task,
+                        // which is responsible for sending replies to the client
                         config.msg_sender.send((command, Some(response_msg_sender.clone()))).unwrap();
                     }
                     else {
                         if let RegisterCommand::System(_) = &command {
                            
                             // a previous message is removed from the set of messages to be sent in StubbronLink implementation if we have received an expected response
-                            // if is_msg_an_expected_system_response(&command) {
-                            // if we have received an ack we have sent before (process id might differ, but uuid should be unique)
-                            // double check for unnecessary sending
+                            // if we have received an ack we have sent before (we assume that uuid should be unique)
                             // ACK matching old requests will not interfere with the algorithm
                             // however, ACKs are resent in order to inform
                             // about the operation completion
-                            if is_msg_an_ack(&command) {//&& (config.self_rank != get_sender_rank(&command)) {
+                            if is_msg_an_ack(&command) {
                                 config.register_client.register_response(command.clone());
                             }
-                            // }
+
                             // the ACK message should be discarded if op_id != msg_ident
 
                             config.msg_sender.send((command, None)).unwrap();
@@ -627,31 +454,13 @@ async fn process_connection(socket: TcpStream, _addr: SocketAddr, error_sender: 
     }
 }
 
-// fn create_empty_read_operation_success(header: &ClientCommandHeader) -> OperationSuccess {
-
-//     let zeroed_vec = vec![0; CONTENT_SIZE];
-//     let zeroed_secor = SectorVec(zeroed_vec);
-    
-//     let operation_success = OperationSuccess{
-//         request_identifier: header.request_identifier,
-//         op_return: OperationReturn::Read(ReadReturn { read_data: zeroed_secor })
-//     };
-
-//     operation_success
-// }
-
-// fn is_sector_written(register_map: &HashMap<SectorIdx, JoinHandle<()>>, already_written_sectors: &HashSet<SectorIdx>, sector_idx: SectorIdx) -> bool {
-//     /*
-//     already written sectors include sectors with dst files after recovery
-//     and indices of sectors to which has been assigned registers which were deactivated. Assuming that a register is created to read from an already written sector or to write to a sector, the register map might indicate that the sector is probably being modified if it has not been already marked as written.
-//      */
-//     unimplemented!()
-// }
 
 
 async fn handle_connections(listener: TcpListener, config: Arc<ConnectionHandlerConfig>) {
     let mut connections: ConnectionMap = HashMap::new();
-    // for deletion of erroneous connections
+    // for deletion of tasks handling erroneous streams sending to clients
+    // if the server crashes and tries to reconnect, it will establish a new connection
+    // too many broken connections might lead to running out of file descriptors
     let (connection_sender, mut connection_receiver) = unbounded_channel::<Uuid>();
 
     loop {
@@ -659,9 +468,6 @@ async fn handle_connections(listener: TcpListener, config: Arc<ConnectionHandler
             client_connection = listener.accept() => {
 
             // there might be up to 16 clients, but there might be more processes willing to connect
-            if let Err(msg) = &client_connection {
-                println!("ERROR IN CONNECTION {}", msg);
-            }
 
                 if let Ok((socket, addr)) = client_connection {
                     let handle_id = uuid::Uuid::new_v4();
@@ -676,7 +482,8 @@ async fn handle_connections(listener: TcpListener, config: Arc<ConnectionHandler
                     None => {},
                     Some(client_id) => {
                         // cleanup of connections which returned error
-                        connections.remove(&client_id);
+                       connections.remove(&client_id);
+                       break;
                     }
                 }
             }
@@ -694,10 +501,6 @@ Handling read requests for empty sectors
 There is a possibility to introduce a set of already written sectors, initialized after systems recovery with the indices of sectors where a correct dst can be found. Additionally, after deactivation of the register we could assume then that registers are created only for reading from already written sectors or in for writing to the sectors, therefore during the deactivation the sector idx of the deactivated register might be recorded in the mentioned set. Therefore the content of the map with currenlty running registers, together with the content of the constantly updated set of the already written sectors, could provide information whether we can immediately send zeroed SectorVec. However, there is a possibility that the process might have crashed just before executing the first WRITE_PROC for the given sector and after recovery, it receives READ request from client, before a stubborn link resends WRITE_PROC. However, running an instance of NN-AtomicRegister algorithm would enable the recovered process to update the sectors content. Therefore registers should be created even in case of issuing READ command on a sector which seems to be empty for a given process. Therefore there could be more active registers than already written sectors.
 */
 pub async fn run_register_process(config: Configuration) {
-    //log::trace!("HEREREEEEE");
-    // println!("heereeeeeeeee");
-    println!("start system {}", config.public.self_rank);
-
     let (host, port) = get_own_number_in_tcp_ports(config.public.self_rank, &config.public.tcp_locations);
     let address = format!("{}:{}", host, port);
     let listener = TcpListener::bind(address).await.unwrap();
@@ -722,22 +525,14 @@ pub async fn run_register_process(config: Configuration) {
     let mut get_suicide_final_ack: ReceiverMap<bool> = HashMap::new();
 
     let processes_count = config.public.tcp_locations.len() as u8;
-    println!("processes count: {}", processes_count);
 
     // messages from clients, other processes and internal
     let (rcommands_sender, mut rcommands_receiver) = unbounded_channel::<MessagesToDelegate>();
 
-    // let root_path = config.public.storage_dir.clone();
     let sector_manager = build_sectors_manager(config.public.storage_dir).await;
-    // let sectors_written_after_recovery = sector_manager.get_
-    // let sectors_written_after_recovery = get_sectors_written_after_recovery(&root_path).await;
-    // let connection_tasks: HashMap<(String, u16), JoinHandle<()>> = HashMap::new();
 
     let register_client = Arc::new(ProcessRegisterClient::new(config.public.tcp_locations.clone(), rcommands_sender.clone(),
     config.public.self_rank, config.hmac_system_key.to_vec().clone()).await);
-
-    // let sectors_manager = build_sectors_manager(config.public.storage_dir).await;
-    // TODO remove
 
     let config_for_connections = Arc::new(ConnectionHandlerConfig{hmac_system_key: config.hmac_system_key, hmac_client_key: config.hmac_client_key, n_sectors: config.public.n_sectors, msg_sender: rcommands_sender.clone(), register_client: register_client.clone(), _self_rank: config.public.self_rank});
 
@@ -747,20 +542,15 @@ pub async fn run_register_process(config: Configuration) {
         tokio::select! {
             suicide_note = suicidal_receiver.recv() => {
                 if let Some(suicidal_sector_idx) = suicide_note {
-                    println!("suicide {}", suicidal_sector_idx);
                     
                     // the sector has requested suicide - we have to check whether its queues are still empty after this time
                     let ask_for_confirmation_res = confirm_suicide_note_delivery.get(&suicidal_sector_idx);
                     if let Some(ask_for_confirmation) = ask_for_confirmation_res {
-                        // //log::debug!("before confirm");
                         ask_for_confirmation.send(1).unwrap();
-                        // //log::debug!("after confirm");
 
                         let register_final_ack_res = get_suicide_final_ack.get_mut(&suicidal_sector_idx);
                         if let Some(register_final_ack_receiver) = register_final_ack_res {
-                            // //log::debug!("before final ack");
                             let is_idle_res = register_final_ack_receiver.recv().await;
-                            // //log::debug!("after final ack");
 
                             if let Some(is_idle) = is_idle_res {
                                 if is_idle {
@@ -776,7 +566,6 @@ pub async fn run_register_process(config: Configuration) {
                                     get_suicide_final_ack.remove(&suicidal_sector_idx);
 
                                     register_handlers.remove(&suicidal_sector_idx);
-                                    // //log::debug!("is idle: {} removed all", is_idle);
                                 }
                             }
 
@@ -793,7 +582,6 @@ pub async fn run_register_process(config: Configuration) {
                     let task_handler = register_handlers.get(&sector_idx);
 
                     if task_handler.is_none() {
-                        // None => {
                             // a new register to be created
                             let (client_cmd_sender, client_cmd_receiver) = unbounded_channel::<ClientMsgCallback>();
                             let (system_cmd_sender, system_cmd_receiver) = unbounded_channel::<SystemRegisterCommand>();
@@ -813,20 +601,13 @@ pub async fn run_register_process(config: Configuration) {
                             is_request_completed_map.insert(sector_idx, is_request_completed);
 
                             register_handlers.insert(sector_idx, atomic_register_handler);
-                        // }
-                        // Some(client_sender_per_sector) => {
-                        //     // The register for the sector already exists - just send the message
-                        //     client_sender_per_sector.send((client_command.clone(), success_callback)).unwrap();
-                        // }
                     }
 
                     // lookup in hashmap should be constant, therefore we can repeat the lookup after insertion
-                    // at this moment the register should be created if it not has been already
+                    // at this moment the register should be created if it has not been already
 
 
                     if let RegisterCommand::Client(client_command) = &rg_command {
-                        log::trace!("\t I am {}", config.public.self_rank);
-                        println!("client {:?}, idx {}, type {:?}", client_command.header, sector_idx, get_system_command_type_enum(&rg_command));
                         if let Some(sender) = option_client_sender {
                             let is_request_completed_res = is_request_completed_map.get(&sector_idx);
 
@@ -845,10 +626,6 @@ pub async fn run_register_process(config: Configuration) {
                     
                     if let RegisterCommand::System(system_command
                     ) = &rg_command {
-                        // if config.public.self_rank == 2 {
-                        //     log::info!("I am 2, received from: {}, sector: {}, type: {:?}, uuid: {}", system_command.header.process_identifier, sector_idx, get_system_command_type_enum(&rg_command), system_command.header.msg_ident);
-                        // }
-                        println!("system {:?}, idx {}, type {:?}, I am {}, from {}", system_command.header, sector_idx, get_system_command_type_enum(&rg_command), config.public.self_rank, system_command.header.process_identifier);
 
                         let system_sender_res = system_msg_queues.get(&sector_idx);
 
@@ -861,7 +638,6 @@ pub async fn run_register_process(config: Configuration) {
         }
     }
     
-    // unimplemented!()
 }
 
 pub mod atomic_register_public {
@@ -909,8 +685,6 @@ pub mod atomic_register_public {
         operation_id: Uuid,
         write_phase: bool, 
         request_id: u64,
-
-        // last_issued_command: Option<SystemRegisterCommand>,
     }
 
     impl RegisterPerSector {
@@ -919,7 +693,6 @@ pub mod atomic_register_public {
             let value = self.sectors_manager.read_data(self.sector_idx).await;
 
             SectorData{timestamp, write_rank, value}
-            // unimplemented!()
         }
 
         async fn recovery(&mut self) {
@@ -929,7 +702,6 @@ pub mod atomic_register_public {
             self.writing_rank = write_rank;
             self.value = Some(value);
 
-            // unimplemented!()
         }
 
         async fn send_broadcast_readproc_command(&mut self) {
@@ -949,7 +721,6 @@ pub mod atomic_register_public {
                 cmd: Arc::new(system_command)
             };
 
-            log::info!("I am broadcasting readproc, rank: {} id: {}", self.my_process_ident, self.sector_idx);
             self.register_client.broadcast(msg).await;
         }
 
@@ -988,8 +759,6 @@ pub mod atomic_register_public {
             };
 
             self.register_client.broadcast(msg).await;
-            // TODO implement store
-            // let reply_content
         }
 
         fn is_quorum_and_reading_or_writing(&self, container_len: usize) -> bool {
@@ -1023,7 +792,6 @@ pub mod atomic_register_public {
 
             return val.clone();
 
-            // unimplemented!()
         }
     }
     
@@ -1049,34 +817,22 @@ pub mod atomic_register_public {
 
             match content {
                 ClientRegisterCommandContent::Read => {
-                    // self.operation_id = Uuid::new_v4();
-                    // self.readlist = HashMap::new();
-                    // self.acklist = HashSet::new();
                     self.reading = true;
 
-                    // self.register_client.broadcast(msg)
                     self.send_broadcast_readproc_command().await;
                     
                 },
                 ClientRegisterCommandContent::Write{data} => {
-                    // self.operation_id = Uuid::new_v4();
                     self.writeval = Some(data);
-                    // self.acklist = HashSet::new();
-                    // self.readlist = HashMap::new();
                     self.writing = true;
 
                     self.send_broadcast_readproc_command().await;
                 }
             }
-            // unimplemented!()
         }
 
         async fn system_command(&mut self, cmd: SystemRegisterCommand) {
             let SystemRegisterCommand{header, content} = cmd;
-
-            // let SystemCommandHeader{process_identifier, msg_ident, sector_idx} = header;
-
-            // let receiver_id = process_identifier;
 
             if header.sector_idx == self.sector_idx {
 
@@ -1091,7 +847,7 @@ pub mod atomic_register_public {
                         };
 
                         let reply = SystemRegisterCommand{
-                            header: reply_header, //header,
+                            header: reply_header, 
                             content: reply_content,
                         };
 
@@ -1100,15 +856,12 @@ pub mod atomic_register_public {
                             target: header.process_identifier,
                         };
 
-                        log::info!("I am sending value after readproc: from {} to {}", self.my_process_ident, header.process_identifier);
                         self.register_client.send(msg).await;
                     },
                     SystemRegisterCommandContent::Value { timestamp, write_rank, sector_data } => {
-                        log::info!("I am {}, received value from {}, op_id: {:?}", self.my_process_ident, header.process_identifier, self.operation_id);
                         if (header.msg_ident == self.operation_id) && !self.write_phase {
                             self.readlist.insert(header.process_identifier, SectorData { timestamp, write_rank, value: sector_data});
 
-                            //log::info!("sector {} got {} values, process count: {}, this time from: {}, I am: {}", self.sector_idx, self.readlist.len(), self.processes_count, header.process_identifier, self.my_process_ident);
                             if self.is_quorum_and_reading_or_writing(self.readlist.len()) {
                                 self.readlist.insert(self.my_process_ident, SectorData { timestamp: self.timestamp, write_rank: self.writing_rank, value: self.get_value().await });
                                 let max_val = self.get_max_value_readlist();
@@ -1153,13 +906,12 @@ pub mod atomic_register_public {
                     },
                     SystemRegisterCommandContent::Ack => {
                         if ((header.msg_ident) == self.operation_id) && self.write_phase {
-                            // self.acklist.insert(self.my_process_ident);
                             self.acklist.insert(header.process_identifier);
-                            //log::info!("sector: {} receieved {} acks", self.sector_idx, self.acklist.len());
-                            if self.is_quorum_and_reading_or_writing(self.acklist.len()){
-                                //log::info!("CALLBACK");
+                            if self.is_quorum_and_reading_or_writing(self.acklist.len()) {
                                 self.acklist = HashSet::new();
                                 self.write_phase = false;
+                                self.operation_id = Uuid::nil();
+
                                 if self.reading {
                                     self.reading = false;
                                     let read_return = ReadReturn{
@@ -1191,7 +943,6 @@ pub mod atomic_register_public {
                     },
                 }
             }
-            // unimplemented!()
         }
 
 
@@ -1256,37 +1007,25 @@ pub mod atomic_register_public {
             operation_id: Uuid::nil(),
             write_phase: false,
             request_id: 0,
-            // last_issued_command: None,
         };
 
         new_register.recovery().await;
 
         return Box::new(new_register);
-        // unimplemented!()
     }
 }
 
 pub mod sectors_manager_public {
     use crate::{SectorIdx, SectorVec, CONTENT_SIZE};
-    // use std::collections::HashSet;
     use std::path::PathBuf;
     use std::sync::Arc;
     use sha2::{Sha256, Digest};
     use tokio::fs::File;
     use tokio::io::AsyncWriteExt;
-    // use tokio::sync::Mutex;
-    // use uuid::timestamp;
-    // use std::io::Error;
-    // use std::ffi::OsStr;
-    // use crate::get_sector_idx_from_filename;
-
     
     struct ProcessSectorManager {
         root_dir: PathBuf,
-        // RWLock to be implemented
-        // written_sectors: Arc<Mutex<HashSet<u64>>>,
         hasher: Sha256,
-        // sectors_written_after_recovery: Option<HashSet<u64>>,
     }
 
     impl ProcessSectorManager {
@@ -1306,11 +1045,6 @@ pub mod sectors_manager_public {
         // checking an error from create etc. won't work,
         // since the file would be truncated if already existed
         async fn sector_file_dir_exists(&self, dirname: &PathBuf) -> bool {
-            // let checked = dirname.try_exists();
-            // match checked {
-            //     Err(_) => false,
-            //     Ok(if_exists) => if_exists,
-            // }
             let metadata = tokio::fs::metadata(dirname).await;
 
             match metadata {
@@ -1339,12 +1073,10 @@ pub mod sectors_manager_public {
             let entries_res = tokio::fs::read_dir(dir_path).await;
             if let Ok(mut entry_reader) = entries_res {
                 while let Ok(Some(dir_entry)) = entry_reader.next_entry().await {
-                    // if let Some(dir_entry) = entry {
                         let entry_path = dir_entry.path();
                         if entry_path.is_file() {
                             return Some(entry_path);
                         }
-                    // }
                 }
             }
 
@@ -1388,13 +1120,9 @@ pub mod sectors_manager_public {
                         return None;
                     }
                     else {
-                        // TODO use custom function?
                         let checksum = &content[content.len() - 32..];
                         let file_content = &content[..content.len()-32];
     
-                        // let mut hasher = self.hasher.clone();
-                        // hasher.update(&file_content);
-                        // let calculated_checksum = hasher.finalize();
                         let calculated_checksum = self.get_checksum(file_content);
     
                         if calculated_checksum.as_slice() == checksum {
@@ -1427,7 +1155,6 @@ pub mod sectors_manager_public {
             if let Ok(mut root_iterator)  = iterator_dir{
                 // iteratate over sectors
                 while let Ok(Some(sector_entry)) = root_iterator.next_entry().await {
-                    // if let Some(sector_entry) = sector_dir {
                         let sector_path = sector_entry.path();
                         let tmp_dir_path = self.create_tmp_dir_name_in_sector(&sector_path);
                     
@@ -1467,9 +1194,6 @@ pub mod sectors_manager_public {
                                                 self.remove_file(&tmp_file_path, &tmp_dir_path).await;
                                             },
                                             Some(content) => {
-                                                // tmp file is correct
-                                            //    let dst_path_res = self.get_current_dst_file_path(&sector_path).await;
-
                                                if let Some(dst_path) = &dst_path_res {
                                                 // remove previous dst
                                                 self.remove_file(&dst_path, &sector_path).await;
@@ -1484,117 +1208,49 @@ pub mod sectors_manager_public {
                                                 self.write_to_file_sync_file_and_dir(&mut new_dst_file, &sector_path, &content).await;
 
                                                     self.remove_file(&tmp_file_path, &tmp_dir_path).await;
-
-
-                                                    // // a new file has been written - 
-                                                    // if let Some(_) = &dst_path_res {
-                                                    //     let sector_idx: u64 = get_sector_idx_from_filename(&sector_path);
-                        
-                                                    //     self.sectors_written_after_recovery.get_or_insert_with(HashSet::new).insert(sector_idx);
-                                                    // }
                                                }
 
                                             }
                                         }
                                     }
-                                    // else {
-                                    //     // there isn't a tmp file, but maybe there is a correct dst then
-                                    //     if let Some(_) = &dst_path_res {
-                                    //         let sector_idx: u64 = get_sector_idx_from_filename(&sector_path);
-            
-                                    //         self.sectors_written_after_recovery.get_or_insert_with(HashSet::new).insert(sector_idx);
-                                    //     }
-                                    // }
                                 }
                                 // otherwise:
                                 // there might be dst file - should be correct
-
-                            // }
                         }
                     }
                     
 
                 }
             }
-            // unimplemented!()
         }
 
 
 
-        fn get_timestamp_write_rank_from_path(&self, path: PathBuf) -> (u64, u8) {
+        fn get_timestamp_write_rank_from_path(&self, path: PathBuf) -> (u64, u8) {      
+            let filename = path.file_name();
+            if let Some(fname) = filename {
+                let fname_str = fname.to_str();
 
-            
-                    // let timestamp_opt = filename.file_stem();//parse().unwrap();
-                    // let write_rank_opt = filename.extension(); //.parse().unwrap();
+                if let Some(timestamp_rank) = fname_str {
+                    let split_pair: Vec<&str> = timestamp_rank.split("_").collect();
 
-                    // if let Some(timestamp) = timestamp_opt {
-                    //     if let Some(write_rank) = write_rank_opt {
-                    //         let time: u8 = timestamp.to_str().parse().unwrap();
-                    //     }
-                    // }
-                    let filename = path.file_name();
-                    if let Some(fname) = filename {
-                        let fname_str = fname.to_str();
+                    let timestamp: u64 = split_pair[0].parse().unwrap();
+                    let write_rank: u8 = split_pair[1].parse().unwrap();
 
-                        if let Some(timestamp_rank) = fname_str {
-                            let split_pair: Vec<&str> = timestamp_rank.split("_").collect();
-
-                            let timestamp: u64 = split_pair[0].parse().unwrap();
-                            let write_rank: u8 = split_pair[1].parse().unwrap();
-
-                            return (timestamp, write_rank);
-                        }
-
-                    }
-
-                    // (0, 0)
-                    // let fname = path.file_name().to_str();
-                    (0, 0)
-                    // (timestamp, write_rank)
+                    return (timestamp, write_rank);
                 }
+
+            }
+
+            (0, 0)
+            }
 
             fn get_empty_zeroed_vec(&self) -> SectorVec {
                 let empty_vec: Vec<u8> = vec![0; CONTENT_SIZE];
 
                 return SectorVec(empty_vec);
-            }
+            }            
 
-            // pub fn get_already_written_sectorsafter_recovery(&mut self) -> HashSet<u64>{
-            //     // return self.sectors_written_after_recovery.clone();
-            //     let sectors_res = self.sectors_written_after_recovery.take();
-            //     match sectors_res {
-            //         None => HashSet::new(),
-            //         Some(sectors) => sectors,
-            //     }
-            // }  // TODO uncomment
-            
-            // let split_pair: Vec<&str> = filename.split("_").collect();
-            // let timestamp: u64 = split_pair[0].parse().unwrap();
-            // let write_rank: u8 = split_pair[1].parse().unwrap();
-            
-
-
-
-        // fn handle_filename_retrieval_get_metadata(&self, filename: Option<&OsStr>) -> (u64, u8) {
-        //     match filename {
-        //         None => return (0, 0),
-        //         Some(fname) => return self.get_timestamp_write_rank_from_filename(fname),
-        //     }
-        // }
-
-        // async fn get_entry(&self, entry_reader: &mut ReadDir) -> Option<DirEntry> {
-            
-        //             let fst_entry = entry_reader.next_entry().await;
-        //             match fst_entry {
-        //                 Err(_) => return None,
-        //                 Ok(None) => return None,
-        //                 Ok(Some(entry1)) => {
-        //                     return Some(entry1);
-        //                 }
-                    
-        //     }
-        //     // return None;
-        // }
     }
 
     #[async_trait::async_trait]
@@ -1610,9 +1266,6 @@ pub mod sectors_manager_public {
                         Err(_) => {
                             // File probably not found
                             // file not written yet
-                            // let empty_vec: Vec<u8> = vec![0; CONTENT_SIZE];
-
-                            // return SectorVec(empty_vec);
                             return self.get_empty_zeroed_vec();
                         }
                         Ok(content) => {
@@ -1622,18 +1275,16 @@ pub mod sectors_manager_public {
                 }
             }
 
-            // unimplemented!()
         }
 
         async fn read_metadata(&self, idx: SectorIdx) -> (u64, u8) {
             // Every atomic register has its own subdirectory for the sector,
             // therefore we can just access the right subdirectory,
-            // once knwoing the pattern
+            // once knowing the pattern
 
-            // onlu &self - this is not a monitor
+            // only &self - this is not a monitor
 
             // if subdir does not exist - not written yet
-            // let sector_path = self.root_dir.join(idx.to_string());
             let sector_path = self.get_sector_dir(idx);
             let dst_file_path = self.get_current_dst_file_path(&sector_path).await;
             match dst_file_path {
@@ -1643,9 +1294,6 @@ pub mod sectors_manager_public {
         }
 
             // After the recovery - there should be destination file and tmp directory
-
-            // unimplemented!()
-
 
         /*
             Structure:
@@ -1677,7 +1325,6 @@ pub mod sectors_manager_public {
                 // therefore I can create the dir and then fsync 
                 tokio::fs::create_dir(&sector_path).await.unwrap();
                 // sync root dir
-                // tokio::fs::File::open(&self.root_dir).await.unwrap().sync_data().await.unwrap();
                 self.sync_dir(&self.root_dir).await;
 
                 // create tmp dir
@@ -1703,11 +1350,6 @@ pub mod sectors_manager_public {
             if let Ok(mut tmp_file) = tmp_file_res {
 
                 self.write_to_file_sync_file_and_dir(&mut tmp_file, &tmp_dir_per_sector_path, &content_with_checksum).await;
-
-                // tmp_file.write_all(&content_with_checksum).await.unwrap();
-                // tmp_file.sync_data().await.unwrap();
-                // self.sync_dir(&tmp_dir_per_sector_path).await;
-
                 // tmp file should be fully written at this moment
                 // even if the crash happens during writing of the dst file,
                 // the content of the most recent write might be recovered
@@ -1732,15 +1374,10 @@ pub mod sectors_manager_public {
                 if let Ok(mut dst_file) = dst_file_res {
                     self.write_to_file_sync_file_and_dir(&mut dst_file, &sector_path, value).await;
 
-                    // dst_file.write_all(value).await.unwrap();
-                    // dst_file.sync_data().await.unwrap();
-                    // self.sync_dir(&sector_path).await;
-
                     // remove tmp_file
                     self.remove_file(&tmp_file_path, &tmp_dir_per_sector_path).await;
                 }
             }
-            // unimplemented!()
         }
     }
 
@@ -1763,28 +1400,20 @@ pub mod sectors_manager_public {
         let mut sector_manager = ProcessSectorManager{
             root_dir: path,
             hasher: Sha256::new(),
-            // sectors_written_after_recovery: Some(HashSet::new()),
         };
         sector_manager.recovery().await;
 
         return Arc::new(sector_manager);
-        // unimplemented!()
     }
 }
 
 
 pub mod transfer_public {
     use crate::{ClientCommandHeader, ClientRegisterCommand, ClientRegisterCommandContent, RegisterCommand, SectorVec, SystemCommandHeader, SystemRegisterCommand, SystemRegisterCommandContent, ACK, CONTENT_SIZE, EXTERNAL_UPPER_HALF, MAGIC_NUMBER, PROCESS_CUSTOM_MSG, PROCESS_RESPONSE_ADD, READ_CLIENT_REQ, READ_PROC, VALUE, WRITE_CLIENT_REQ, WRITE_PROC};
-    use std::io::{Error, ErrorKind};  // alloc::System, 
+    use std::io::{Error, ErrorKind};  
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
-    // use hmac::digest::KeyInit;
     use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-    // use uuid::timestamp::context;
-
-    // use sha2::Sha256;
-    // use hmac::{Hmac, Mac};
-    // // use hex_literal::hex;
     
     // Create alias for HMAC-SHA256
     type HmacSha256 = Hmac<Sha256>;
@@ -1830,33 +1459,18 @@ pub mod transfer_public {
         let mut read_magic = vec![0; 4];
         let not_found = true;
 
-        // let mut res = data.read_exact(read_magic.as_mut()).await;
         data.read_exact(&mut read_magic).await?;
 
         while not_found {
-            // match res {
-            //     Err(ref e) if e.kind() == ErrorKind::UnexpectedEof => {
-            //         return Ok(false)
-            //     }
-            //     Err(err) => {
-            //         return Err(err);
-            //     }
-            //     Ok(_) => {
                     if read_magic == MAGIC_NUMBER {
                         return Ok(true)
                     }
 
-                    // let (first_three, last_byte) = read_magic.split_at_mut(3);
-                    // first_three.copy_from_slice(&read_magic[1..4]);
                     let mut temp: [u8; 3] = [0; 3];
                     temp.copy_from_slice(&read_magic[1..4]);
                     read_magic[0..3].copy_from_slice(&temp);
 
-                    // res = data.read_exact(&mut read_magic[3..4]).await;
                     data.read_exact(&mut read_magic[3..4]).await?;
-
-                    //     }
-            // }
         }
 
         Ok(false)
@@ -1911,18 +1525,11 @@ pub mod transfer_public {
         }
     }
 
-    // TODO use with capacity instead for optimisation
     pub async fn deserialize_register_command(
         data: &mut (dyn AsyncRead + Send + Unpin),
         hmac_system_key: &[u8; 64],
         hmac_client_key: &[u8; 32],
     ) -> Result<(RegisterCommand, bool), Error> {
-        // let is_magic_nr_found = is_magic_number_found(data).await;
-
-        // match is_magic_nr_found {
-        //     Err(e) => {return Err(e)},
-        //     Ok(false) => {return Err(Error::new(ErrorKind::UnexpectedEof, "No magic number found to the end of the message"))},
-        //     Ok(true) => {
         let full_msg_found = false;
 
         while !full_msg_found {
@@ -1937,7 +1544,6 @@ pub mod transfer_public {
             log::debug!("MESSAGE TYPE: {}", msg_type);
 
             let is_msg_type_correct = is_message_type_valid(msg_type);
-                // }
             
             if !is_msg_type_correct {
                 continue;
@@ -1956,7 +1562,6 @@ pub mod transfer_public {
                     let mut sector_idx: [u8; 8] = [0; 8];
                     data.read_exact(sector_idx.as_mut()).await?;
 
-                    // msg.extend_from_slice(u64::from_be_bytes(request_number));
                     msg.extend_from_slice(&request_number);
                     msg.extend_from_slice(&sector_idx);
 
@@ -1969,8 +1574,6 @@ pub mod transfer_public {
 
                     let mut tag: [u8; 32] = [0; 32];
                     data.read_exact(tag.as_mut()).await?;
-
-                    // TODO check if sector is correct
 
                     let hmac_result = verify_hmac_tag(&msg, &tag, hmac_client_key);
 
@@ -2024,8 +1627,6 @@ pub mod transfer_public {
                         msg.extend_from_slice(&content);
                     }
 
-                    // if (lower_half == READ_PROC) || (lower_half == ACK) {
-                        // no content
                     let mut tag: [u8; 32] = [0; 32];
                     data.read_exact(tag.as_mut()).await?;
 
@@ -2060,7 +1661,6 @@ pub mod transfer_public {
                             return Ok((register_command, is_hmac_valid));
                         }
                     }
-                    // }
                  }
             }
             else {
@@ -2070,7 +1670,6 @@ pub mod transfer_public {
         }
 
         return Err(Error::new(ErrorKind::Other, "Not implemented other than basic messages"));
-        // unimplemented!()
     }
 
     pub async fn serialize_register_command(
@@ -2083,7 +1682,6 @@ pub mod transfer_public {
 
         match cmd {
             RegisterCommand::Client(client_rcmd) => {
-                // TODO move read to static array
 
                 let padding: [u8; 3] = [0; 3];
                 msg.extend_from_slice(&padding);
@@ -2108,19 +1706,6 @@ pub mod transfer_public {
                     msg.extend_from_slice(&vec_to_write);
                 }
 
-                // let mut mac_res = HmacSha256::new_from_slice(hmac_key);
-                
-                // match mac_res {
-                //     Err(msg) => {return Err(Error::new(std::io::ErrorKind::InvalidInput, msg.to_string()));},
-                //     Ok(mut mac) => {
-                //         mac.update(&msg);
-                //         let tag = mac.finalize().into_bytes();
-
-                //         msg.extend_from_slice(&tag);
-
-                //         writer.write_all(&msg).await?
-                //     }
-                // }
                 create_mac_or_get_error(writer, hmac_key, msg).await?;
 
                 Ok(())
@@ -2143,13 +1728,6 @@ pub mod transfer_public {
                         Ok(())
                     },
                     SystemRegisterCommandContent::Value{timestamp, write_rank, sector_data} => {
-                        // msg.extend_from_slice(&timestamp.to_be_bytes());
-                        // let pad_val: [u8; 7] = [0; 7];
-                        // msg.extend_from_slice(&pad_val);
-                        // msg.push(*write_rank);
-                        
-                        // let SectorVec(vec_to_write) = sector_data;
-                        // msg.extend_from_slice(&vec_to_write);
                         write_val_write_proc(&mut msg, timestamp, write_rank, sector_data);
 
                         create_mac_or_get_error(writer, hmac_key, msg).await?;
@@ -2158,7 +1736,6 @@ pub mod transfer_public {
                     SystemRegisterCommandContent::WriteProc { timestamp, write_rank, data_to_write } => {
                         write_val_write_proc(&mut msg, timestamp, write_rank, data_to_write);
 
-                        // writer.write_all(&timestamp.to_be_bytes()).await?;
                         create_mac_or_get_error(writer, hmac_key, msg).await?;
                         Ok(())
                     },
@@ -2169,13 +1746,11 @@ pub mod transfer_public {
                 }
             }
         }
-        // unimplemented!()
     }
 }
 
 struct ProcessRegisterClient {
     // indices in vectors indicate the corresponding process
-    // tcp_locations: Arc<Vec<(String, u16)>>,
     // messages to be sent to the processes
     messages_to_processes: Arc<Vec<RegisterClientSender>>,
     // if connection receives a message regarding a particular register
@@ -2184,34 +1759,27 @@ struct ProcessRegisterClient {
     _stubborn_links: Arc<Vec<JoinHandle<()>>>,
     // for redirection of messages sent to itself
     _self_rank: u8,
-    // // channel for messages to itself
-    // // TODO clone before sending a message?
-    // self_msg_sender: MessagesToSectorsSender,
 }
 
 impl ProcessRegisterClient{
     fn register_response(&self, msg: RegisterCommand) {
-        //clone sender befoer using it
         // send to the stubbornlink which should handle given process
-        // record repeated acknowledgement in order to stop sendin unnecessary acks for already completed action
+        // record repeated acknowledgement in order to stop sending unnecessary acks for already completed action
         // if this process sent an ACK, the sending process performed the communication with the client
         let process_rank = get_sender_rank(&msg);
         if process_rank != 0 {
             let ack_channel = self.ack_channels[get_process_idx_in_vec(process_rank)].clone();
             ack_channel.send(msg).unwrap();
         }
-        // unimplemented!()
     }
 
     fn is_ack_from_readreturn_with_get_msg_ident(command: &RegisterClientMessage, messages: &RetransmissionMap, self_rank: u8) -> (bool, Uuid) {
-        // if let RegisterCommand::System(SystemRegisterCommand{header, content}) = command {
             let SystemRegisterCommand{header, content} = command.as_ref();
 
-            // TODO NO
+            // We sent it, so it should have been our rank, but I am a little nervous at this moment :)
             if self_rank == header.process_identifier 
             && header.msg_ident.is_nil() {
                 if let SystemRegisterCommandContent::Ack = content {
-                    // if header.msg_ident.is_nil() {
                         // Ack - an arbitrary identifier for ReadReturn
                         // we have to check now if there is WriteProc as the last message to be sent from the register which has finished (as assigned to sectoridx)
                         let last_command = messages.get(&header.sector_idx);
@@ -2223,11 +1791,8 @@ impl ProcessRegisterClient{
                                     // we were the process which finished the request and does not need any further acks
                                     return (true, rc_header.msg_ident);
                                 }
-                            // }
                         }
-                    // }
                 }
-            // }
         }
 
         (false, Uuid::nil())
@@ -2241,31 +1806,6 @@ impl ProcessRegisterClient{
             content: SystemRegisterCommandContent::Ack,
         });
     }
-
-    // fn is_message_to_itself(self_rank: u8, command: &RegisterClientMessage) -> bool {
-    //     let SystemRegisterCommand{header, ..} = command.as_ref(); 
-
-    //     if header.process_identifier == self_rank {
-    //             return true;
-    //     }
-
-    //     false
-    // }
-
-    // fn is_arced_msg_an_ack(command: &RegisterClientMessage) -> bool {
-    //     let SystemRegisterCommand{header: _, content} = command.as_ref();
-    //     if let SystemRegisterCommandContent::Ack = content {
-    //         return true;
-    //     }
-
-    //     false
-    // }
-
-    // fn get_arced_msg_uuid(command: &RegisterClientMessage) -> Uuid {
-    //     let SystemRegisterCommand{header, ..} = command.as_ref();
-
-    //     header.msg_ident        
-    // }
 
     fn wrap_systemcommand_into_command(command: &SystemRegisterCommand) -> RegisterCommand {
         RegisterCommand::System(command.clone())
@@ -2285,7 +1825,6 @@ impl ProcessRegisterClient{
             &SystemRegisterCommandContent::WriteProc{..} => true,
             _ => false
         }
-        // false
     }
 
     fn get_systemcommand_enum_val(command_content: &SystemRegisterCommandContent) -> u8 {
@@ -2317,26 +1856,7 @@ impl ProcessRegisterClient{
         }
 
         false
-        // unimplemented!()
     }
-
-    // fn remove_unnecessary_msg_from_to_be_sent_set(response: RegisterCommand,
-    // messages: &mut RetransmitionMap) {
-    //     // delete messages if either of the processes proceeds
-    //     if let RegisterCommand::System(SystemRegisterCommand{
-    //         header,
-    //         content
-    //     }) = &response {
-    //         let op_id = header.msg_ident;
-    //         let found_entry = messages.get(&op_id);
-
-    //         if let Some(msg_to_be_resent) = found_entry {
-    //             if (get_system_command_type_enum(&response) == SystemCommandType::WriteProc) && (get_system_command_type_enum(msg_to_be_resent)  == SystemCommandType::Value) {
-    //                 messages.remove(&op_id);
-    //             }
-    //         }
-    //     }
-    // }
 
            /*
         The process sends two types of messages: as an initiating side (it hsa received a request from client) or as a responding side (it receives requests from a process which has contacted the client).
@@ -2359,52 +1879,31 @@ impl ProcessRegisterClient{
         The further retransmissions of ACKs does not influence the progress of the system, since the operation has been already completed. If some processes do not receive the final ACK from the initiating process, they might resend acks, but they will be ignored, since op_id will be outdated
         */
     async fn handle_process_connection(tcp_location: (String, u16), mut ack_receiver: RCommandReceiver, mut msg_to_send_receiver: RegisterClientReceiver, self_rank: u8, hmac_system_key: Vec<u8>) {
-        // todo add_broadcast
 
         let mut retransmition_tick = time::interval(Duration::from_millis(RETRANSMITION_DELAY));
         retransmition_tick.tick().await;
 
-        // TODO set as none op_id
         let mut initiated_messages_to_be_resent: RetransmissionMap = HashMap::new();
         // acks to be resent in case of readreturn
-        // let mut acks_to_be_resent: AckRetransmitMap = HashMap::new();
         let mut replies_to_be_resent: RetransmissionMap = HashMap::new();
 
-        // let mut connection_error_to_be_resent: Vec<RegisterCommand> = Vec::new();
-    
-
-        //log::info!("inside stubborn link, I am {}", self_rank);
         loop {
             let tcp_connect_result = TcpStream::connect(&tcp_location).await;
 
             match tcp_connect_result {
-                Err(msg) => {//log::debug!("error in stubborn link {}", msg.to_string());
-                    println!("stubborn link error: {} in {}", msg, self_rank);
+                Err(_) => {
+                    // In order not to overwhelm the server - timeout is set
                     tokio::time::sleep(Duration::from_millis(500)).await;
                     continue},
                 Ok(mut stream) => {
                     loop {
                         // we reconnected after losing the connection
-                        // if !connection_error_to_be_resent.is_empty() {
-                        //     for msg in &connection_error_to_be_resent{
-                        //         let res = serialize_register_command(msg, &mut stream, hmac_system_key).await;
-
-                        //         if res.is_err() {
-                        //             break; // we need to reconnect probably
-                        //         }
-                        //     }
-
-                        //     connection_error_to_be_resent = Vec::new();
-                        // }
 
                         tokio::select! {
                             msg_to_send = msg_to_send_receiver.recv() => {
-                                // TODO acks by uuid
-                                //log::info!("got a message in link to send, I am {}", self_rank);
                                 match msg_to_send {
                                     None => {},
                                     Some(command) => {
-                                        //log::info!("{} got a command {:?}", self_rank, command);
                                         // we need to retrieve op_id
                                         let (is_readreturn, msg_ident) = ProcessRegisterClient::is_ack_from_readreturn_with_get_msg_ident(&command, &initiated_messages_to_be_resent, self_rank);
 
@@ -2413,7 +1912,6 @@ impl ProcessRegisterClient{
                                             successcallback does not know the uuid, therefore we check uuid from write_proc and create a new message with upddated uuid (susbtitute for nil in readreturn ACK)
                                              */
                                             let updated_command = ProcessRegisterClient::get_command_with_updated_msg_ident(&command, msg_ident);
-                                            // acks_to_be_resent.insert(msg_ident, updated_command.clone());
 
                                             // remove write_proc from map
                                             // readreturn checks also for write_proc and returns true only if the last message was write_proc from a given sector
@@ -2423,8 +1921,7 @@ impl ProcessRegisterClient{
 
                                             match res {
                                                 Err(_) => {
-                                                    // we need to resend
-                                                    // connection_error_to_be_resent.push(updated_command);
+                                                    // probably we need to reconnect
                                                     break;
                                                 }
 
@@ -2433,8 +1930,7 @@ impl ProcessRegisterClient{
                                         }
                                         else {
                                             
-                                            // if it is amessage to the  external process 
-                                            log::info!("external, from {}, msg type: {:?}, uuid: {}", self_rank, get_system_command_type_enum(&RegisterCommand::System(command.as_ref().clone())), command.as_ref().header.msg_ident );
+                                            // if it is a message to the  external process 
                                             let mut to_be_sent = true;
 
                                             if ProcessRegisterClient::is_my_request(&command) {
@@ -2458,7 +1954,6 @@ impl ProcessRegisterClient{
                                                 // we do not store uuid of the messages we reply to, therefore we have to determine it in the stubborn link
                                             }
 
-                                            //log::info!("is to be sent: {} from {} to {}", to_be_sent, self_rank, command.as_ref().header.process_identifier);
                                             if to_be_sent {
                                                 let res = serialize_register_command(&ProcessRegisterClient::wrap_systemcommand_into_command(command.as_ref()), &mut stream, &hmac_system_key).await;
 
@@ -2468,7 +1963,7 @@ impl ProcessRegisterClient{
                                                         // exiting inner loop in order to connect to the socket in the outer loop
                                                         break;
                                                     },
-                                                    Ok(_) => {}//log::info!("serialized");}
+                                                    Ok(_) => {}
                                                 }
                                             }
                                         }
@@ -2483,7 +1978,6 @@ impl ProcessRegisterClient{
                                     Some(ack) => {
                                         let msg_uuid = get_msg_uuid_if_systemcommand(&ack);
                                         // remove the message which is not needed to be sent
-                                        // acks_to_be_resent.remove(&msg_uuid);
 
                                         let sector_idx = get_sector_idx_from_command(&ack);
 
@@ -2505,7 +1999,7 @@ impl ProcessRegisterClient{
                             }
 
                             _ = retransmition_tick.tick() => {
-                                //retransmission tick
+                                // retransmission tick
                                 for (_, msg) in &initiated_messages_to_be_resent {
                                     let command = ProcessRegisterClient::wrap_systemcommand_into_command(&msg);
                                     let res = serialize_register_command(&command, &mut stream, &hmac_system_key).await;
@@ -2529,8 +2023,6 @@ impl ProcessRegisterClient{
                                         Ok(_) => {},
                                     }
                                 }
-
-                                // for (_, ack)
                             }
 
                         }
@@ -2542,17 +2034,12 @@ impl ProcessRegisterClient{
 
     async fn handle_connection_to_itself(mut msg_to_send_receiver: RegisterClientReceiver, send_to_itself: MessagesToSectorsSender) {
         /*
-        if readreturn received - it will be discarded byt due to incorrect 
-        // just send a message
-        // if it is internal message -
-        // return to the main message channel
-        // TODO prepare a separate task,
-        // since taskhandlers are just ttask handlers in the vector
+        if it is internal message -
+        return to the main message channel
          */
         loop {
             let msg = msg_to_send_receiver.recv().await; 
                     if let Some(msg_to_itself) = msg {
-                        //log::debug!("I AM MYSELF sender");
                         // readreturn ack is not needed
                         if !msg_to_itself.header.msg_ident.is_nil() {
                             let command = ProcessRegisterClient::wrap_systemcommand_into_command(msg_to_itself.as_ref());
@@ -2566,7 +2053,6 @@ impl ProcessRegisterClient{
     pub async fn new(tcp_locations: Vec<(String, u16)>, messages_to_itself_sender: MessagesToSectorsSender,
         self_rank: u8,
         hmac_system_key: Vec<u8>) -> Self {
-        // TODO do I need and arc here?
         let mut msg_to_be_sent: Vec<RegisterClientSender> = Vec::new();
         let mut ack_channels: Vec<RCommandSender> = Vec::new();
         let mut stubborn_links: Vec<JoinHandle<()>> = Vec::new();
@@ -2576,15 +2062,13 @@ impl ProcessRegisterClient{
             let (msg_to_send_sender, msg_to_send_receiver) = unbounded_channel::<RegisterClientMessage>();
             let (ack_sender, ack_receiver) = unbounded_channel::<RegisterCommand>();
 
-            //log::debug!("idx: {}, SELF idx: {}, SELF RANK: {}", idx, self_location, self_rank)
             if idx == self_location {
                  // for my own process - add only a handler rebouncing the messages
                 let link_to_itself = tokio::spawn(ProcessRegisterClient::handle_connection_to_itself(msg_to_send_receiver, messages_to_itself_sender.clone()));
 
                 stubborn_links.push(link_to_itself);
 
-                // TODO check
-                // ack_receiver is not needed
+                // ack_receiver is not needed, since I have issued readreturn
             }
             else {
                 let stubborn_link = tokio::spawn(ProcessRegisterClient::handle_process_connection(location.clone(), ack_receiver, msg_to_send_receiver, self_rank, hmac_system_key.clone()));
@@ -2601,10 +2085,8 @@ impl ProcessRegisterClient{
             ack_channels: Arc::new(ack_channels),
             _stubborn_links: Arc::new(stubborn_links),
             _self_rank: self_rank,
-            // self_msg_sender: messages_to_itself_sender,
         };
 
-        // unimplemented!()
         register_client
     }
 }
@@ -2615,8 +2097,6 @@ impl RegisterClient for ProcessRegisterClient {
         let process_idx = get_process_idx_in_vec(msg.target);
         let sender = self.messages_to_processes[process_idx].clone();
         sender.send(msg.cmd).unwrap();
-
-        // unimplemented!()
     }
 
     async fn broadcast(&self, msg: Broadcast) {
@@ -2625,16 +2105,13 @@ impl RegisterClient for ProcessRegisterClient {
         However, it might panic in case of excessive message number (usize::MAX / 2),
         therefore simple unbounded channel is used
 
-        // TODO separate channel for broadcast?
+        Additionally, the same channel for broadcast and send enables easier queueing of messages (important in readreturn)
+
          */
-        // let mut counter = 0;
         for sending_channel in self.messages_to_processes.clone().iter() {
             let cloned_channel = sending_channel.clone();
-            //log::info!("sending to {} from {}", counter, self._self_rank);
-            // counter += 1;
             cloned_channel.send(msg.cmd.clone()).unwrap();
         }
-        // unimplemented!()
     }
 }
 
