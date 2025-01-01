@@ -2380,7 +2380,7 @@ impl ProcessRegisterClient{
             match tcp_connect_result {
                 Err(msg) => {//log::debug!("error in stubborn link {}", msg.to_string());
                     println!("stubborn link error: {} in {}", msg, self_rank);
-                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    tokio::time::sleep(Duration::from_secs(1)).await;
                     continue},
                 Ok(mut stream) => {
                     loop {
