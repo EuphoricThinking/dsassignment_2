@@ -116,7 +116,7 @@ fn get_msg_response_type_from_operation_success(response: &OperationSuccess) -> 
     }
 }
 
-
+#[allow(dead_code)]
 fn get_system_command_type_enum(command: &RegisterCommand) -> SystemCommandType {
     if let RegisterCommand::System(SystemRegisterCommand{header: _, content}) = &command {
         if let SystemRegisterCommandContent::ReadProc = &content {
@@ -395,7 +395,7 @@ async fn process_connection(socket: TcpStream, _addr: SocketAddr, error_sender: 
     tokio::spawn(process_responses_to_clients(response_to_client_socket, config.hmac_client_key.clone() , response_msg_receiver, error_sender, handle_id));
 
     loop {
-        log::debug!("I AM {}", config._self_rank);
+        log::debug!("I AM {} going to deserialize", config._self_rank);
         let deserialize_result = deserialize_register_command(&mut requests_from_clients_socket, &config.hmac_system_key, &config.hmac_client_key).await;
 
         match deserialize_result {
@@ -468,6 +468,7 @@ async fn handle_connections(listener: TcpListener, config: Arc<ConnectionHandler
             client_connection = listener.accept() => {
 
             // there might be up to 16 clients, but there might be more processes willing to connect
+                println!("accepting {:?}, I am {}", client_connection, config._self_rank);
 
                 if let Ok((socket, addr)) = client_connection {
                     let handle_id = uuid::Uuid::new_v4();
@@ -482,8 +483,9 @@ async fn handle_connections(listener: TcpListener, config: Arc<ConnectionHandler
                     None => {},
                     Some(client_id) => {
                         // cleanup of connections which returned error
+                        println!("error occured in serialize channel msg, I am {}", config._self_rank);
                        connections.remove(&client_id);
-                       break;
+                    //    break;
                     }
                 }
             }
@@ -501,6 +503,7 @@ Handling read requests for empty sectors
 There is a possibility to introduce a set of already written sectors, initialized after systems recovery with the indices of sectors where a correct dst can be found. Additionally, after deactivation of the register we could assume then that registers are created only for reading from already written sectors or in for writing to the sectors, therefore during the deactivation the sector idx of the deactivated register might be recorded in the mentioned set. Therefore the content of the map with currenlty running registers, together with the content of the constantly updated set of the already written sectors, could provide information whether we can immediately send zeroed SectorVec. However, there is a possibility that the process might have crashed just before executing the first WRITE_PROC for the given sector and after recovery, it receives READ request from client, before a stubborn link resends WRITE_PROC. However, running an instance of NN-AtomicRegister algorithm would enable the recovered process to update the sectors content. Therefore registers should be created even in case of issuing READ command on a sector which seems to be empty for a given process. Therefore there could be more active registers than already written sectors.
 */
 pub async fn run_register_process(config: Configuration) {
+    println!("I am {}", config.public.self_rank);
     let (host, port) = get_own_number_in_tcp_ports(config.public.self_rank, &config.public.tcp_locations);
     let address = format!("{}:{}", host, port);
     let listener = TcpListener::bind(address).await.unwrap();
@@ -577,7 +580,6 @@ pub async fn run_register_process(config: Configuration) {
             command = rcommands_receiver.recv() => {
                 if let Some((rg_command, option_client_sender)) = command {
                     let sector_idx = get_sector_idx_from_command(&rg_command);
-                    
 
                     let task_handler = register_handlers.get(&sector_idx);
 
@@ -608,6 +610,7 @@ pub async fn run_register_process(config: Configuration) {
 
 
                     if let RegisterCommand::Client(client_command) = &rg_command {
+                        println!("{} received {:?} type {:?}", config.public.self_rank, client_command.header, get_system_command_type_enum(&rg_command));
                         if let Some(sender) = option_client_sender {
                             let is_request_completed_res = is_request_completed_map.get(&sector_idx);
 
@@ -626,6 +629,7 @@ pub async fn run_register_process(config: Configuration) {
                     
                     if let RegisterCommand::System(system_command
                     ) = &rg_command {
+                        println!("{} received {:?} type {:?}", config.public.self_rank, system_command.header, get_system_command_type_enum(&rg_command));
 
                         let system_sender_res = system_msg_queues.get(&sector_idx);
 
@@ -1541,7 +1545,6 @@ pub mod transfer_public {
             data.read_exact(padding_rank_msg_type.as_mut()).await?;
 
             let msg_type = padding_rank_msg_type[3];
-            log::debug!("MESSAGE TYPE: {}", msg_type);
 
             let is_msg_type_correct = is_message_type_valid(msg_type);
             
@@ -1893,6 +1896,8 @@ impl ProcessRegisterClient{
             match tcp_connect_result {
                 Err(_) => {
                     // In order not to overwhelm the server - timeout is set
+                    // let (host, port) = &tcp_location;
+                    // println!("{} tries to connect to {} {}", self_rank, host, port);
                     tokio::time::sleep(Duration::from_millis(500)).await;
                     continue},
                 Ok(mut stream) => {
@@ -1922,6 +1927,7 @@ impl ProcessRegisterClient{
                                             match res {
                                                 Err(_) => {
                                                     // probably we need to reconnect
+                                                    println!("{} tries to connect in readreturn ", self_rank);
                                                     break;
                                                 }
 
@@ -1961,6 +1967,7 @@ impl ProcessRegisterClient{
                                                     Err(_) => {
                                                         // error in sending, probably reconnection needed
                                                         // exiting inner loop in order to connect to the socket in the outer loop
+                                                        println!("{} tries to connect in readreturn ", self_rank);
                                                         break;
                                                     },
                                                     Ok(_) => {}
@@ -2000,16 +2007,23 @@ impl ProcessRegisterClient{
 
                             _ = retransmition_tick.tick() => {
                                 // retransmission tick
+                                let mut sending_error_ocurred = false;
                                 for (_, msg) in &initiated_messages_to_be_resent {
                                     let command = ProcessRegisterClient::wrap_systemcommand_into_command(&msg);
                                     let res = serialize_register_command(&command, &mut stream, &hmac_system_key).await;
                                     match res {
                                         Err(_) => {
                                             // trying to reconnect in order to fix the conection error
+                                            sending_error_ocurred = true;
                                             break;
                                         }
                                         Ok(_) => {},
                                     }
+                                }
+
+                                if sending_error_ocurred {
+                                    println!("error in initiated resent; breaking");
+                                    break;
                                 }
 
                                 for (_, reply) in &replies_to_be_resent {
@@ -2018,18 +2032,27 @@ impl ProcessRegisterClient{
                                     match res {
                                         Err(_) => {
                                             // trying to reconnect in order to fix the conection error
+                                            sending_error_ocurred = true;
                                             break;
                                         }
                                         Ok(_) => {},
                                     }
                                 }
+
+                                if sending_error_ocurred {
+                                    println!("error in replies; breaking");
+                                    break;
+                                }
                             }
 
                         }
                     }
+                    println!("{} exited ok() loop", self_rank);
                 }
             }
+            println!("{} got out of match", self_rank);
         }
+        println!("{} exited link loop", self_rank);
     }
 
     async fn handle_connection_to_itself(mut msg_to_send_receiver: RegisterClientReceiver, send_to_itself: MessagesToSectorsSender) {
