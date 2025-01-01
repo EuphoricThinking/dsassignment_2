@@ -468,8 +468,6 @@ async fn handle_connections(listener: TcpListener, config: Arc<ConnectionHandler
             client_connection = listener.accept() => {
 
             // there might be up to 16 clients, but there might be more processes willing to connect
-                println!("accepting {:?}, I am {}", client_connection, config._self_rank);
-
                 if let Ok((socket, addr)) = client_connection {
                     let handle_id = uuid::Uuid::new_v4();
                     let spawned_handle = tokio::spawn(process_connection(socket, addr, connection_sender.clone(), handle_id, config.clone()));
@@ -483,7 +481,6 @@ async fn handle_connections(listener: TcpListener, config: Arc<ConnectionHandler
                     None => {},
                     Some(client_id) => {
                         // cleanup of connections which returned error
-                        println!("error occured in serialize channel msg, I am {}", config._self_rank);
                        connections.remove(&client_id);
                     //    break;
                     }
@@ -503,7 +500,6 @@ Handling read requests for empty sectors
 There is a possibility to introduce a set of already written sectors, initialized after systems recovery with the indices of sectors where a correct dst can be found. Additionally, after deactivation of the register we could assume then that registers are created only for reading from already written sectors or in for writing to the sectors, therefore during the deactivation the sector idx of the deactivated register might be recorded in the mentioned set. Therefore the content of the map with currenlty running registers, together with the content of the constantly updated set of the already written sectors, could provide information whether we can immediately send zeroed SectorVec. However, there is a possibility that the process might have crashed just before executing the first WRITE_PROC for the given sector and after recovery, it receives READ request from client, before a stubborn link resends WRITE_PROC. However, running an instance of NN-AtomicRegister algorithm would enable the recovered process to update the sectors content. Therefore registers should be created even in case of issuing READ command on a sector which seems to be empty for a given process. Therefore there could be more active registers than already written sectors.
 */
 pub async fn run_register_process(config: Configuration) {
-    println!("I am {}", config.public.self_rank);
     let (host, port) = get_own_number_in_tcp_ports(config.public.self_rank, &config.public.tcp_locations);
     let address = format!("{}:{}", host, port);
     let listener = TcpListener::bind(address).await.unwrap();
@@ -610,7 +606,6 @@ pub async fn run_register_process(config: Configuration) {
 
 
                     if let RegisterCommand::Client(client_command) = &rg_command {
-                        println!("{} received {:?} type {:?}", config.public.self_rank, client_command.header, get_system_command_type_enum(&rg_command));
                         if let Some(sender) = option_client_sender {
                             let is_request_completed_res = is_request_completed_map.get(&sector_idx);
 
@@ -629,8 +624,6 @@ pub async fn run_register_process(config: Configuration) {
                     
                     if let RegisterCommand::System(system_command
                     ) = &rg_command {
-                        println!("{} received {:?} type {:?}", config.public.self_rank, system_command.header, get_system_command_type_enum(&rg_command));
-
                         let system_sender_res = system_msg_queues.get(&sector_idx);
 
                         if let Some(system_sender) = system_sender_res {
@@ -1897,7 +1890,6 @@ impl ProcessRegisterClient{
                 Err(_) => {
                     // In order not to overwhelm the server - timeout is set
                     // let (host, port) = &tcp_location;
-                    // println!("{} tries to connect to {} {}", self_rank, host, port);
                     tokio::time::sleep(Duration::from_millis(500)).await;
                     continue},
                 Ok(mut stream) => {
@@ -1927,7 +1919,6 @@ impl ProcessRegisterClient{
                                             match res {
                                                 Err(_) => {
                                                     // probably we need to reconnect
-                                                    println!("{} tries to connect in readreturn ", self_rank);
                                                     break;
                                                 }
 
@@ -2022,7 +2013,6 @@ impl ProcessRegisterClient{
                                 }
 
                                 if sending_error_ocurred {
-                                    println!("error in initiated resent; breaking");
                                     break;
                                 }
 
@@ -2040,19 +2030,15 @@ impl ProcessRegisterClient{
                                 }
 
                                 if sending_error_ocurred {
-                                    println!("error in replies; breaking");
                                     break;
                                 }
                             }
 
                         }
                     }
-                    println!("{} exited ok() loop", self_rank);
                 }
             }
-            println!("{} got out of match", self_rank);
         }
-        println!("{} exited link loop", self_rank);
     }
 
     async fn handle_connection_to_itself(mut msg_to_send_receiver: RegisterClientReceiver, send_to_itself: MessagesToSectorsSender) {
