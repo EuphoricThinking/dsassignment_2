@@ -222,6 +222,10 @@ async fn process_responses_to_clients(mut socket_to_write: OwnedWriteHalf, hmac_
 
         match msg {
             None => {
+                /*
+                closed channel, no remaining messages
+                no further values can ever be received from this Receiver
+                 */
                 error_sender.send(handle_id).unwrap();
             }
             Some((operation_success, status_code)) => {
@@ -229,6 +233,7 @@ async fn process_responses_to_clients(mut socket_to_write: OwnedWriteHalf, hmac_
 
                 let send_res = socket_to_write.write_all(&reply).await;
                 if send_res.is_err() {
+                    // we don't establish new connection on our own with clients        
                     error_sender.send(handle_id).unwrap();
                 }
             }
@@ -241,27 +246,26 @@ fn create_a_closure(client_response_sender: ClientResponseSender, sector_idx: u6
         Box::pin(async move {
             client_response_sender.send((success, StatusCode::Ok)).unwrap();            
 
-                /*
-                Messages sent in channels are queued
-                Even if the register starts handling another request, this message will be preceding all the next commands
-                Even if the register would send ack message as a reply to another process' request, this ack would follow the special ACK, therefore we can check whether this is a special ACK and whether our register issued WriteProc
-                 */
-                let msg = SystemRegisterCommand{
-                    header: SystemCommandHeader{
-                        process_identifier: self_process_id,
-                        msg_ident: Uuid::nil(),
-                        sector_idx: sector_idx,
-                    },
-                    content: SystemRegisterCommandContent::Ack,
-                };
+            /*
+            Messages sent in channels are queued
+            Even if the register starts handling another request, this message will be preceding all the next commands
+            Even if the register would send ack message as a reply to another process' request, this ack would follow the special ACK, therefore we can check whether this is a special ACK and whether our register issued WriteProc
+                */
+            let msg = SystemRegisterCommand{
+                header: SystemCommandHeader{
+                    process_identifier: self_process_id,
+                    msg_ident: Uuid::nil(),
+                    sector_idx: sector_idx,
+                },
+                content: SystemRegisterCommandContent::Ack,
+            };
 
-                /*
-                In this implementation, the messages are broadcasted using the same channel, which ensures that when the current register sends its message at this moment, any later message will be following the broadcasted now message
-                 */
-                register_client.broadcast(Broadcast{cmd: Arc::new(msg)}).await;
+            /*
+            In this implementation, the messages are broadcasted using the same channel, which ensures that when the current register sends its message at this moment, any later message will be following the broadcasted now message
+                */
+            register_client.broadcast(Broadcast{cmd: Arc::new(msg)}).await;
 
-                is_request_completed.store(true, Ordering::Relaxed);
-            
+            is_request_completed.store(true, Ordering::Relaxed);
         })
     })
 
@@ -280,7 +284,7 @@ async fn is_register_going_to_be_killed(client_commands_channel: &ClientMsgCallb
          */
         let confirmation = has_process_received_suicide_note.recv().await;
         if let Some(_) = confirmation {
-            // we reconfirm whether we still don't have work ot do
+            // we reconfirm whether we still don't have work to do
             let are_channels_empty = client_commands_channel.is_empty() && system_commands_channel.is_empty();
 
             confirm_whether_register_is_needed.send(are_channels_empty).unwrap();
@@ -307,7 +311,7 @@ However, there might have been sent new messages and the register is not handlin
 
 select_biased! might intorduce the risk of starving channels (when listing response from the process at the top; it is only one response, however, client and system channels should be picked randomly)
 
-Since non-blocking execution of the process is important as it is resonsible for delegation of the tasks for sectors, the author decides that it is more performant for the sector to wait.
+Since non-blocking execution of the process is important as it is responsible for delegation of the tasks for sectors, the author decides that it is more performant for the sector to wait.
 
 Since the function needs mutable receivers in order to receive messages, the Receiver does not implement Clone trait and Arcs allow only immutable references (except for using a Mutex), an additional confirmation channel loop for confirmation of suicide notes has been introduced.
 
@@ -385,8 +389,9 @@ fn get_msg_uuid_if_systemcommand(command: &RegisterCommand) -> Uuid {
 /*
 Spawn a task for sending replies to clients 
 */
-async fn process_connection(socket: TcpStream, _addr: SocketAddr, error_sender: UnboundedSender<Uuid>, handle_id: Uuid,  config: Arc<ConnectionHandlerConfig>) {
+async fn process_single_client_connection(socket: TcpStream, _addr: SocketAddr, error_sender: UnboundedSender<Uuid>, handle_id: Uuid,  config: Arc<ConnectionHandlerConfig>) {
 
+    // a channel for receiving replies from the process
     let (response_msg_sender, response_msg_receiver) = unbounded_channel::<(OperationSuccess, StatusCode)>();
 
     // tcp socket for accepting responses and sending responses
@@ -395,7 +400,6 @@ async fn process_connection(socket: TcpStream, _addr: SocketAddr, error_sender: 
     tokio::spawn(process_responses_to_clients(response_to_client_socket, config.hmac_client_key.clone() , response_msg_receiver, error_sender, handle_id));
 
     loop {
-        log::debug!("I AM {} going to deserialize", config._self_rank);
         let deserialize_result = deserialize_register_command(&mut requests_from_clients_socket, &config.hmac_system_key, &config.hmac_client_key).await;
 
         match deserialize_result {
@@ -432,6 +436,7 @@ async fn process_connection(socket: TcpStream, _addr: SocketAddr, error_sender: 
                         if let RegisterCommand::System(_) = &command {
                            
                             // a previous message is removed from the set of messages to be sent in StubbronLink implementation if we have received an expected response
+                            // we should remove ack if the operation completes
                             // if we have received an ack we have sent before (we assume that uuid should be unique)
                             // ACK matching old requests will not interfere with the algorithm
                             // however, ACKs are resent in order to inform
@@ -470,7 +475,7 @@ async fn handle_connections(listener: TcpListener, config: Arc<ConnectionHandler
             // there might be up to 16 clients, but there might be more processes willing to connect
                 if let Ok((socket, addr)) = client_connection {
                     let handle_id = uuid::Uuid::new_v4();
-                    let spawned_handle = tokio::spawn(process_connection(socket, addr, connection_sender.clone(), handle_id, config.clone()));
+                    let spawned_handle = tokio::spawn(process_single_client_connection(socket, addr, connection_sender.clone(), handle_id, config.clone()));
                     connections.insert(handle_id, spawned_handle);
                 }
             
@@ -482,7 +487,6 @@ async fn handle_connections(listener: TcpListener, config: Arc<ConnectionHandler
                     Some(client_id) => {
                         // cleanup of connections which returned error
                        connections.remove(&client_id);
-                    //    break;
                     }
                 }
             }
@@ -518,6 +522,7 @@ pub async fn run_register_process(config: Configuration) {
     // After recevinig the suicidal note - the process sends the delivery confirmation,
     // indicating that the process expect the register to confirm whether
     // its queue are still empty
+    // u8 in order not to mistake for suicide_final_ack
     let mut confirm_suicide_note_delivery: SendersMap<u8> = HashMap::new();
     // the register responds to the process confirmation by informing whether
     // the register is still needed
@@ -545,6 +550,7 @@ pub async fn run_register_process(config: Configuration) {
                     // the sector has requested suicide - we have to check whether its queues are still empty after this time
                     let ask_for_confirmation_res = confirm_suicide_note_delivery.get(&suicidal_sector_idx);
                     if let Some(ask_for_confirmation) = ask_for_confirmation_res {
+                        // not important exact value
                         ask_for_confirmation.send(1).unwrap();
 
                         let register_final_ack_res = get_suicide_final_ack.get_mut(&suicidal_sector_idx);
@@ -557,7 +563,7 @@ pub async fn run_register_process(config: Configuration) {
                                 // we can remove it together with all associated
                                 // channels
                                 // although channels might be overwritten during the next map update,
-                                // for the sake of memory management - they are deleted, too
+                                // for the sake of the memory management - they are deleted, too
                                     client_msg_queues.remove(&suicidal_sector_idx);
                                     system_msg_queues.remove(&suicidal_sector_idx);
                                     is_request_completed_map.remove(&suicidal_sector_idx);
@@ -622,8 +628,7 @@ pub async fn run_register_process(config: Configuration) {
                             
                         
                     
-                    if let RegisterCommand::System(system_command
-                    ) = &rg_command {
+                    if let RegisterCommand::System(system_command) = &rg_command {
                         let system_sender_res = system_msg_queues.get(&sector_idx);
 
                         if let Some(system_sender) = system_sender_res {
@@ -1778,6 +1783,10 @@ impl ProcessRegisterClient{
                 if let SystemRegisterCommandContent::Ack = content {
                         // Ack - an arbitrary identifier for ReadReturn
                         // we have to check now if there is WriteProc as the last message to be sent from the register which has finished (as assigned to sectoridx)
+                        /*
+                        We have sent nil command which is issued as a part of readreturn. Therefore, the last command we have sent to other processes has been write_proc. Since the sector processes one command at a time, write_proc in hashmap would be the last command of the given sector. From that write_proc we extract message uuid.
+                        By using the same channel as other messages we ensure that the write_proc would refer to the operation we have just finished
+                         */
                         let last_command = messages.get(&header.sector_idx);
 
                         if let Some(msg) = last_command {
@@ -1861,7 +1870,7 @@ impl ProcessRegisterClient{
 
         If it is a responding side, it might have to respond to the messages of an unpredictable order (TCP might be out of roder or the initiating process proceeed with the majority of votes, without our process) and they also might be repeated by stubborn links.
         When we reply to the given process, to the given sector idx:
-        - if in the retransmition set there is a message with the same uuid, but with older type (i.e. we are going to retransmit WRITE_PROC, but our new message is ACK): we know that the algorithm advanced and that we can replace that message
+        - if in the retransmission set there is a message with the same uuid, but with older type (i.e. we are going to retransmit WRITE_PROC, but our new message is ACK): we know that the algorithm advanced and that we can replace that message
         - if there is a message with the same uuid and the same type: we might replace it with the new message, because maybe we can deliver the most recent value since we might have finished the WRITE request in the meantime
         - if there is a message with the same uuid already in the set and we are going to send the message with the *older* type (reordering of received messages, stubborn delivery, TCP issues etc.): we LEAVE the message in the set and DON'T send our message
         - if there is a message from the given sector with a DIFFERENT uuid: since atomic registers execute requests for clients in linear order, the reply we were about to resend is not needed (the process finished the previous operation or crashed) and we replace the message
@@ -1870,17 +1879,18 @@ impl ProcessRegisterClient{
         Handling of final acknowledgements
         SuccessCallback broadcasts to all stubborn links ACK message with nil uuid. Since our process was the one initiating the connection, it wouldn't send the acknowledgement. Additionally, even if the given sector could send ACKs as a response to the other processes - broadcast sends messages to the same channel as send(), therefore the messages from the given sector will be queued in the order of sending. 
         
-        When the stubborn link receives nil acknowledgment from itself, it sends acknowledgment to the process it is communicating with. This process was the one which has sent ack previously - we send the ack back. The process shouldn't have received the ack with this uuid - it was the one who has been sending it. Therefore it knows that the operation was finished and removes the ACK from the retransmition set.
+        When the stubborn link receives nil acknowledgment from itself, it sends acknowledgment to the process it is communicating with. This process was the one which has sent ack previously - we send the ack back. The outer process shouldn't have received the ack with this uuid - it was the one who has been sending it. Therefore it knows that the operation was finished and removes the ACK from the retransmission set.
 
         The further retransmissions of ACKs does not influence the progress of the system, since the operation has been already completed. If some processes do not receive the final ACK from the initiating process, they might resend acks, but they will be ignored, since op_id will be outdated
         */
     async fn handle_process_connection(tcp_location: (String, u16), mut ack_receiver: RCommandReceiver, mut msg_to_send_receiver: RegisterClientReceiver, self_rank: u8, hmac_system_key: Vec<u8>) {
 
-        let mut retransmition_tick = time::interval(Duration::from_millis(RETRANSMITION_DELAY));
-        retransmition_tick.tick().await;
+        let mut retransmission_tick = time::interval(Duration::from_millis(RETRANSMISSION_DELAY));
+        retransmission_tick.tick().await;
 
+        // messages sent by a process as a client request receiver
         let mut initiated_messages_to_be_resent: RetransmissionMap = HashMap::new();
-        // acks to be resent in case of readreturn
+        // essages sent by a process as a replying side process (VALUE, ACK)
         let mut replies_to_be_resent: RetransmissionMap = HashMap::new();
 
         loop {
@@ -1889,12 +1899,12 @@ impl ProcessRegisterClient{
             match tcp_connect_result {
                 Err(_) => {
                     // In order not to overwhelm the server - timeout is set
-                    // let (host, port) = &tcp_location;
                     tokio::time::sleep(Duration::from_millis(500)).await;
                     continue},
                 Ok(mut stream) => {
                     loop {
-                        // we reconnected after losing the connection
+                        // we established a connection
+                        // or we reconnected after losing the connection
 
                         tokio::select! {
                             msg_to_send = msg_to_send_receiver.recv() => {
@@ -1912,6 +1922,9 @@ impl ProcessRegisterClient{
 
                                             // remove write_proc from map
                                             // readreturn checks also for write_proc and returns true only if the last message was write_proc from a given sector
+                                            /*
+                                            write proc might be overwritten, but we might also perfomr only one write
+                                             */
                                             initiated_messages_to_be_resent.remove(&get_sector_idx_from_command(&updated_command));
 
                                             let res = serialize_register_command(&updated_command, &mut stream, &hmac_system_key).await;
@@ -1958,7 +1971,6 @@ impl ProcessRegisterClient{
                                                     Err(_) => {
                                                         // error in sending, probably reconnection needed
                                                         // exiting inner loop in order to connect to the socket in the outer loop
-                                                        println!("{} tries to connect in readreturn ", self_rank);
                                                         break;
                                                     },
                                                     Ok(_) => {}
@@ -1980,7 +1992,7 @@ impl ProcessRegisterClient{
                                         let sector_idx = get_sector_idx_from_command(&ack);
 
                                         // we should have be repliers to this uuid
-                                        // if we receive an ACK for the message we have been replying to - this is an indicator, since we have been the one sending the ACK
+                                        // if we receive an ACK for the message we have been replying to - this is an indicator, since we have been the one sending the ACK and receiving such message is not typical
                                         let reply_for_sector = replies_to_be_resent.get(&sector_idx);
 
                                         if let Some(stored_msg) = reply_for_sector {
@@ -1996,9 +2008,10 @@ impl ProcessRegisterClient{
                                 
                             }
 
-                            _ = retransmition_tick.tick() => {
+                            _ = retransmission_tick.tick() => {
                                 // retransmission tick
                                 let mut sending_error_ocurred = false;
+
                                 for (_, msg) in &initiated_messages_to_be_resent {
                                     let command = ProcessRegisterClient::wrap_systemcommand_into_command(&msg);
                                     let res = serialize_register_command(&command, &mut stream, &hmac_system_key).await;

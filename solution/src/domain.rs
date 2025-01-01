@@ -26,7 +26,7 @@ pub static CONTENT_SIZE: usize = 4096;
 pub static READ_RESPONSE_STATUS_CODE: u8 = 0x41;
 pub static WRITE_RESPONSE_STATUS_CODE: u8 = 0x42;
 
-pub static RETRANSMITION_DELAY: u64 = 500;
+pub static RETRANSMISSION_DELAY: u64 = 500;
 
 #[derive (Debug)] // TODO added
 pub struct Configuration {
