@@ -28,6 +28,7 @@ pub static WRITE_RESPONSE_STATUS_CODE: u8 = 0x42;
 
 pub static RETRANSMITION_DELAY: u64 = 500;
 
+#[derive (Debug)] // TODO added
 pub struct Configuration {
     /// Hmac key to verify and sign internal requests.
     pub hmac_system_key: [u8; 64],

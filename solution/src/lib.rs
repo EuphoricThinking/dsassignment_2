@@ -339,7 +339,7 @@ async fn process_responses_to_clients(mut socket_to_write: OwnedWriteHalf, hmac_
                 error_sender.send(handle_id).unwrap();
             }
             Some((operation_success, status_code)) => {
-                //log::info!("completed request: {:?}", operation_success.request_identifier);
+                println!("completed request: {:?}", operation_success.request_identifier);
                 let reply = serialize_response(operation_success, status_code, &hmac_key);
 
                 let send_res = socket_to_write.write_all(&reply).await;
@@ -659,11 +659,16 @@ async fn handle_connections(listener: TcpListener, config: Arc<ConnectionHandler
             client_connection = listener.accept() => {
 
             // there might be up to 16 clients, but there might be more processes willing to connect
+            if let Err(msg) = &client_connection {
+                println!("ERROR IN CONNECTION {}", msg);
+            }
+
                 if let Ok((socket, addr)) = client_connection {
                     let handle_id = uuid::Uuid::new_v4();
                     let spawned_handle = tokio::spawn(process_connection(socket, addr, connection_sender.clone(), handle_id, config.clone()));
                     connections.insert(handle_id, spawned_handle);
                 }
+            
             }
 
             error_ocurred = connection_receiver.recv() => {
@@ -690,8 +695,9 @@ There is a possibility to introduce a set of already written sectors, initialize
 */
 pub async fn run_register_process(config: Configuration) {
     //log::trace!("HEREREEEEE");
-    println!("heereeeeeeeee");
-    //log::info!("start system");
+    // println!("heereeeeeeeee");
+    println!("start system {}", config.public.self_rank);
+
     let (host, port) = get_own_number_in_tcp_ports(config.public.self_rank, &config.public.tcp_locations);
     let address = format!("{}:{}", host, port);
     let listener = TcpListener::bind(address).await.unwrap();
@@ -741,7 +747,8 @@ pub async fn run_register_process(config: Configuration) {
         tokio::select! {
             suicide_note = suicidal_receiver.recv() => {
                 if let Some(suicidal_sector_idx) = suicide_note {
-                    // //log::debug!("suicide {}", suicidal_sector_idx);
+                    println!("suicide {}", suicidal_sector_idx);
+                    
                     // the sector has requested suicide - we have to check whether its queues are still empty after this time
                     let ask_for_confirmation_res = confirm_suicide_note_delivery.get(&suicidal_sector_idx);
                     if let Some(ask_for_confirmation) = ask_for_confirmation_res {
@@ -819,7 +826,7 @@ pub async fn run_register_process(config: Configuration) {
 
                     if let RegisterCommand::Client(client_command) = &rg_command {
                         log::trace!("\t I am {}", config.public.self_rank);
-                        log::trace!("client {:?}, idx {}, type {:?}", client_command.header, sector_idx, get_system_command_type_enum(&rg_command));
+                        println!("client {:?}, idx {}, type {:?}", client_command.header, sector_idx, get_system_command_type_enum(&rg_command));
                         if let Some(sender) = option_client_sender {
                             let is_request_completed_res = is_request_completed_map.get(&sector_idx);
 
@@ -838,10 +845,10 @@ pub async fn run_register_process(config: Configuration) {
                     
                     if let RegisterCommand::System(system_command
                     ) = &rg_command {
-                        if config.public.self_rank == 2 {
-                            log::info!("I am 2, received from: {}, sector: {}, type: {:?}, uuid: {}", system_command.header.process_identifier, sector_idx, get_system_command_type_enum(&rg_command), system_command.header.msg_ident);
-                        }
-                        //log::debug!("system {:?}, idx {}, type {:?}", system_command.header, sector_idx, get_system_command_type_enum(&rg_command));
+                        // if config.public.self_rank == 2 {
+                        //     log::info!("I am 2, received from: {}, sector: {}, type: {:?}, uuid: {}", system_command.header.process_identifier, sector_idx, get_system_command_type_enum(&rg_command), system_command.header.msg_ident);
+                        // }
+                        println!("system {:?}, idx {}, type {:?}, I am {}, from {}", system_command.header, sector_idx, get_system_command_type_enum(&rg_command), config.public.self_rank, system_command.header.process_identifier);
 
                         let system_sender_res = system_msg_queues.get(&sector_idx);
 
@@ -2371,7 +2378,9 @@ impl ProcessRegisterClient{
             let tcp_connect_result = TcpStream::connect(&tcp_location).await;
 
             match tcp_connect_result {
-                Err(_) => {//log::debug!("error in stubborn link {}", msg.to_string());
+                Err(msg) => {//log::debug!("error in stubborn link {}", msg.to_string());
+                    println!("stubborn link error: {} in {}", msg, self_rank);
+                    tokio::time::sleep(Duration::from_millis(500)).await;
                     continue},
                 Ok(mut stream) => {
                     loop {
