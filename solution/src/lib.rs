@@ -890,7 +890,7 @@ pub mod atomic_register_public {
 
                     },
                     SystemRegisterCommandContent::WriteProc { timestamp, write_rank, data_to_write } => {
-                        if (self.timestamp, self.writing_rank) > (timestamp, write_rank) {
+                        if (self.timestamp, self.writing_rank) < (timestamp, write_rank) {
                             self.store_and_save(timestamp, write_rank, &data_to_write).await;
                         }
 
